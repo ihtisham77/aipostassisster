@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent_generator import AgentGenerator
 from config import get_config
 from report_generator import generate_report_from_server
+from module_registry import get_compatible_modules, get_module_list_formatted, get_modules_by_priority, MODULES
 
 class OperatorCLI:
     def __init__(self, server_url):
@@ -38,13 +39,35 @@ class OperatorCLI:
                 print("╚═══════════════════════════════════════════════════════════════════════╝\n")
 
                 for agent in agents:
+                    # Determine OS type
+                    platform = agent['platform']
+                    if 'Windows' in platform:
+                        os_icon = "🪟"
+                        os_type = "Windows"
+                    elif 'Linux' in platform:
+                        os_icon = "🐧"
+                        os_type = "Linux"
+                    elif 'Darwin' in platform or 'Mac' in platform:
+                        os_icon = "🍎"
+                        os_type = "macOS"
+                    else:
+                        os_icon = "💻"
+                        os_type = "Unknown"
+
+                    # Get compatible modules count
+                    compatible_modules = get_compatible_modules(platform)
+
+                    status_icon = "✅" if agent['status'] == 'active' else "⚠️"
+
                     print(f"Agent ID:        {agent['agent_id']}")
                     print(f"Hostname:        {agent['hostname']}")
-                    print(f"Platform:        {agent['platform']}")
+                    print(f"Platform:        {os_icon} {platform}")
+                    print(f"OS Type:         {os_type}")
                     print(f"IP Address:      {agent['ip_address']}")
-                    print(f"Status:          {agent['status']}")
+                    print(f"Status:          {status_icon} {agent['status']}")
                     print(f"Last Seen:       {agent['last_seen']}")
                     print(f"Commands Run:    {agent['commands_executed']}")
+                    print(f"Compatible Mods: {len(compatible_modules)}/{len(MODULES)}")
                     print("-" * 75)
 
                 print(f"\nTotal Agents: {len(agents)}\n")
@@ -88,6 +111,10 @@ class OperatorCLI:
     def run_module(self, agent_id, module_name):
         """Run a security assessment module on an agent"""
         try:
+            # Check if "all" modules requested
+            if module_name.lower() == "all":
+                return self.run_all_modules(agent_id)
+
             command = {
                 "type": "module",
                 "module": module_name
@@ -107,6 +134,67 @@ class OperatorCLI:
 
         except requests.exceptions.RequestException as e:
             print(f"[!] Connection error: {e}")
+
+    def run_all_modules(self, agent_id):
+        """Run all compatible modules on an agent"""
+        try:
+            # Get agent info to determine OS
+            response = requests.get(f"{self.server_url}/api/agents", timeout=10)
+            if response.status_code != 200:
+                print(f"[!] Error fetching agent info: {response.status_code}")
+                return
+
+            agents = response.json().get('agents', [])
+            agent = None
+            for a in agents:
+                if a['agent_id'] == agent_id:
+                    agent = a
+                    break
+
+            if not agent:
+                print(f"[!] Agent {agent_id} not found")
+                return
+
+            # Get compatible modules for this agent's OS
+            platform = agent['platform']
+            compatible_modules = get_modules_by_priority(platform)
+
+            if not compatible_modules:
+                print(f"[!] No compatible modules found for {platform}")
+                return
+
+            print(f"\n[*] Running {len(compatible_modules)} modules on {agent['hostname']} ({platform})")
+            print(f"[*] Modules: {', '.join(compatible_modules)}\n")
+
+            # Queue all modules
+            queued = 0
+            for module_name in compatible_modules:
+                command = {
+                    "type": "module",
+                    "module": module_name
+                }
+
+                response = requests.post(
+                    f"{self.server_url}/api/command",
+                    json={"agent_id": agent_id, "command": command},
+                    timeout=10
+                )
+
+                if response.status_code == 200:
+                    print(f"  ✓ Queued: {module_name}")
+                    queued += 1
+                else:
+                    print(f"  ✗ Failed: {module_name}")
+
+            print(f"\n[+] Successfully queued {queued}/{len(compatible_modules)} modules")
+            print(f"[*] Agent will execute modules automatically")
+            print(f"[*] Use 'results {agent_id}' to view results")
+            print(f"[*] Use 'report {agent_id}' to generate comprehensive report\n")
+
+        except requests.exceptions.RequestException as e:
+            print(f"[!] Connection error: {e}")
+        except Exception as e:
+            print(f"[!] Error: {e}")
 
     def run_shell_command(self, agent_id, command):
         """Run a shell command on an agent"""
@@ -148,27 +236,31 @@ class OperatorCLI:
         except Exception as e:
             print(f"[!] Error generating agent: {e}")
 
-    def show_modules(self):
+    def show_modules(self, os_filter=None):
         """Show available security assessment modules"""
-        modules = [
-            ("privilege_escalation", "Check for privilege escalation vulnerabilities"),
-            ("persistence", "Check for persistence mechanisms"),
-            ("credential_harvesting", "Check for exposed credentials"),
-            ("reconnaissance", "Gather system and network information"),
-            ("lateral_movement", "Check for lateral movement opportunities"),
-            ("data_access", "Check for accessible sensitive data"),
-            ("data_exfiltration", "Check for data exfiltration channels"),
-            ("c2_comms", "Check C2 communication capabilities"),
-            ("covering_tracks", "Check logging and forensic capabilities")
-        ]
-
         print("\n╔═══════════════════════════════════════════════════════════════════════╗")
         print("║                    SECURITY ASSESSMENT MODULES                        ║")
         print("╚═══════════════════════════════════════════════════════════════════════╝\n")
 
-        for module, description in modules:
-            print(f"{module:25} - {description}")
+        if os_filter:
+            print(f"Showing modules compatible with: {os_filter}\n")
+            modules_list = get_module_list_formatted(os_filter)
+        else:
+            print("Showing all modules (all operating systems)\n")
+            modules_list = get_module_list_formatted()
 
+        print(f"{'Module ID':<25} {'Description':<35} {'OS Support':<15}")
+        print("-" * 75)
+
+        for module_id, name, description, os_list in modules_list:
+            print(f"{module_id:<25} {description:<35} {os_list:<15}")
+
+        print()
+        print(f"Total modules: {len(modules_list)}")
+        print()
+        print("Usage:")
+        print("  module <agent_id> <module_name>  - Run single module")
+        print("  module <agent_id> all            - Run ALL compatible modules")
         print()
 
     def generate_report(self, agent_id, format_type='all', output_dir='reports'):
@@ -207,13 +299,13 @@ class OperatorCLI:
     ╚═══════════════════════════════════════════════════════════════╝
 
     Commands:
-      agents                             - List all agents
+      agents                             - List all agents with OS info
       results <agent_id>                 - Get results for an agent
-      module <agent_id> <module_name>    - Run assessment module
+      module <agent_id> <module_name>    - Run single module (or 'all' for all modules)
       shell <agent_id> <command>         - Run shell command
       report <agent_id> [format] [dir]   - Generate report (all/json/html/md)
       generate <platform> [url]          - Generate new agent (URL optional)
-      modules                            - List available modules
+      modules [os]                       - List modules (optionally filter by OS)
       help                               - Show this help
       exit                               - Exit CLI
 
@@ -236,13 +328,13 @@ class OperatorCLI:
                 elif command == "help":
                     print("""
     Commands:
-      agents                             - List all agents
+      agents                             - List all agents with OS info
       results <agent_id>                 - Get results for an agent
-      module <agent_id> <module_name>    - Run assessment module
+      module <agent_id> <module_name>    - Run single module (or 'all' for all modules)
       shell <agent_id> <command>         - Run shell command
       report <agent_id> [format] [dir]   - Generate report (all/json/html/md)
       generate <platform> [url]          - Generate new agent (URL optional)
-      modules                            - List available modules
+      modules [os]                       - List modules (optionally filter by OS)
       help                               - Show this help
       exit                               - Exit CLI
                     """)
@@ -278,7 +370,8 @@ class OperatorCLI:
                     self.generate_agent(parts[1], operator_url)
 
                 elif command == "modules":
-                    self.show_modules()
+                    os_filter = parts[1] if len(parts) >= 2 else None
+                    self.show_modules(os_filter)
 
                 elif command == "report":
                     if len(parts) < 2:
