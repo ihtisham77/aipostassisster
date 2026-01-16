@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Report Generation Module
-Generates comprehensive security assessment reports from agent findings
+Report Generation Module - PRODUCTION ENHANCED
+Generates comprehensive security assessment reports with confidence scoring and professional formatting
 """
 
 import json
@@ -10,8 +10,28 @@ from collections import defaultdict, Counter
 import os
 
 
+# Terminal color codes for enhanced output
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+    # Severity colors
+    CRITICAL = '\033[91m\033[1m'  # Bold Red
+    HIGH = '\033[91m'  # Red
+    MEDIUM = '\033[93m'  # Yellow
+    LOW = '\033[94m'  # Blue
+    INFO = '\033[37m'  # White/Gray
+
+
 class ReportGenerator:
-    """Generate professional security assessment reports"""
+    """Generate professional security assessment reports with enhanced features"""
 
     def __init__(self, agent_data, results_data):
         """
@@ -25,15 +45,18 @@ class ReportGenerator:
         self.results = results_data
         self.findings_by_severity = defaultdict(list)
         self.findings_by_module = defaultdict(list)
+        self.findings_by_confidence = defaultdict(list)
         self.statistics = {}
 
         self._process_results()
 
     def _process_results(self):
-        """Process and categorize all findings"""
+        """Process and categorize all findings with confidence scoring"""
         total_findings = 0
         severity_counts = Counter()
         module_counts = Counter()
+        confidence_counts = Counter()
+        verified_count = 0
 
         for result in self.results:
             module_name = result.get('module', 'unknown')
@@ -47,6 +70,16 @@ class ReportGenerator:
                 severity_counts[severity] += 1
                 total_findings += 1
 
+                # Process confidence scoring
+                confidence_score = finding.get('confidence_score', 0)
+                confidence_level = finding.get('confidence_level', 'unknown')
+                verified = finding.get('verified', False)
+
+                if verified:
+                    verified_count += 1
+
+                confidence_counts[confidence_level] += 1
+
                 # Add metadata to finding
                 finding['module'] = module_name
                 finding['timestamp'] = result.get('timestamp', 'N/A')
@@ -57,10 +90,15 @@ class ReportGenerator:
                 # Categorize by module
                 self.findings_by_module[module_name].append(finding)
 
+                # Categorize by confidence
+                self.findings_by_confidence[confidence_level].append(finding)
+
         self.statistics = {
             'total_findings': total_findings,
             'severity_counts': dict(severity_counts),
             'module_counts': dict(module_counts),
+            'confidence_counts': dict(confidence_counts),
+            'verified_findings': verified_count,
             'modules_run': len(module_counts),
             'critical_findings': severity_counts.get('critical', 0),
             'high_findings': severity_counts.get('high', 0),
@@ -70,7 +108,7 @@ class ReportGenerator:
         }
 
     def calculate_risk_score(self):
-        """Calculate overall risk score (0-100)"""
+        """Calculate overall risk score (0-100) with confidence weighting"""
         weights = {
             'critical': 10,
             'high': 5,
@@ -81,8 +119,11 @@ class ReportGenerator:
 
         score = 0
         for severity, weight in weights.items():
-            count = self.statistics['severity_counts'].get(severity, 0)
-            score += count * weight
+            findings = self.findings_by_severity.get(severity, [])
+            for finding in findings:
+                # Weight by confidence score
+                confidence = finding.get('confidence_score', 100) / 100
+                score += weight * confidence
 
         # Normalize to 0-100 scale
         # Assume 50+ points = 100 risk score
@@ -104,7 +145,7 @@ class ReportGenerator:
             return "MINIMAL"
 
     def generate_executive_summary(self):
-        """Generate executive summary"""
+        """Generate executive summary with confidence metrics"""
         risk_score = self.calculate_risk_score()
         risk_level = self.get_risk_level(risk_score)
 
@@ -117,57 +158,183 @@ class ReportGenerator:
             'total_findings': self.statistics['total_findings'],
             'critical_findings': self.statistics['critical_findings'],
             'high_findings': self.statistics['high_findings'],
+            'verified_findings': self.statistics['verified_findings'],
             'modules_assessed': self.statistics['modules_run'],
-            'key_concerns': self._get_key_concerns()
+            'key_concerns': self._get_key_concerns(),
+            'confidence_summary': {
+                'verified': self.statistics['confidence_counts'].get('verified', 0),
+                'high': self.statistics['confidence_counts'].get('high', 0),
+                'medium': self.statistics['confidence_counts'].get('medium', 0),
+                'low': self.statistics['confidence_counts'].get('low', 0)
+            }
         }
 
         return summary
 
     def _get_key_concerns(self):
-        """Identify top 3-5 key security concerns"""
+        """Identify top 5 key security concerns (prioritize high-confidence findings)"""
         concerns = []
 
-        # Critical findings first
-        critical = self.findings_by_severity.get('critical', [])
+        # Critical findings first (sorted by confidence)
+        critical = sorted(
+            self.findings_by_severity.get('critical', []),
+            key=lambda x: x.get('confidence_score', 0),
+            reverse=True
+        )
         for finding in critical[:3]:
             concerns.append({
                 'severity': 'CRITICAL',
                 'issue': finding.get('finding', 'N/A'),
-                'module': finding.get('module', 'N/A')
+                'module': finding.get('module', 'N/A'),
+                'confidence': finding.get('confidence_score', 0),
+                'confidence_level': finding.get('confidence_level', 'unknown')
             })
 
         # Then high severity if we need more
         if len(concerns) < 5:
-            high = self.findings_by_severity.get('high', [])
+            high = sorted(
+                self.findings_by_severity.get('high', []),
+                key=lambda x: x.get('confidence_score', 0),
+                reverse=True
+            )
             for finding in high[:5-len(concerns)]:
                 concerns.append({
                     'severity': 'HIGH',
                     'issue': finding.get('finding', 'N/A'),
-                    'module': finding.get('module', 'N/A')
+                    'module': finding.get('module', 'N/A'),
+                    'confidence': finding.get('confidence_score', 0),
+                    'confidence_level': finding.get('confidence_level', 'unknown')
                 })
 
         return concerns
+
+    def print_console_report(self):
+        """Print a beautiful color-coded report to console"""
+        exec_summary = self.generate_executive_summary()
+
+        # Header
+        print("\n" + "="*80)
+        print(f"{Colors.BOLD}{Colors.HEADER}╔═══════════════════════════════════════════════════════════════════════════════╗{Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.HEADER}║          C2 SECURITY ASSESSMENT FRAMEWORK - COMPREHENSIVE REPORT              ║{Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.HEADER}╚═══════════════════════════════════════════════════════════════════════════════╝{Colors.ENDC}")
+        print("="*80 + "\n")
+
+        # Executive Summary
+        print(f"{Colors.BOLD}{Colors.OKCYAN}█ EXECUTIVE SUMMARY{Colors.ENDC}\n")
+        print(f"  Target System:     {Colors.BOLD}{exec_summary['target_system']}{Colors.ENDC}")
+        print(f"  Platform:          {exec_summary['platform']}")
+        print(f"  Assessment Date:   {exec_summary['assessment_date']}")
+        print(f"  Modules Assessed:  {exec_summary['modules_assessed']}")
+
+        # Risk Score with color
+        risk_color = self._get_color_for_risk(exec_summary['risk_level'])
+        print(f"\n  {Colors.BOLD}Overall Risk Level: {risk_color}{exec_summary['risk_level']} ({exec_summary['risk_score']}/100){Colors.ENDC}")
+
+        # Visual risk meter
+        filled = int(exec_summary['risk_score'] / 5)
+        empty = 20 - filled
+        print(f"  Risk Meter: [{risk_color}{'█' * filled}{Colors.ENDC}{'░' * empty}] {exec_summary['risk_score']}%\n")
+
+        # Statistics Grid
+        print(f"{Colors.BOLD}{Colors.OKCYAN}█ FINDINGS SUMMARY{Colors.ENDC}\n")
+        print(f"  ╔════════════════════════════════════════════════════════════════╗")
+        print(f"  ║ {Colors.BOLD}Total Findings: {self.statistics['total_findings']:<47}{Colors.ENDC}║")
+        print(f"  ╠════════════════════════════════════════════════════════════════╣")
+
+        # Severity breakdown with colors
+        print(f"  ║ {Colors.CRITICAL}● CRITICAL:{Colors.ENDC}    {self.statistics['critical_findings']:<48}║")
+        print(f"  ║ {Colors.HIGH}● HIGH:{Colors.ENDC}        {self.statistics['high_findings']:<48}║")
+        print(f"  ║ {Colors.MEDIUM}● MEDIUM:{Colors.ENDC}      {self.statistics['medium_findings']:<48}║")
+        print(f"  ║ {Colors.LOW}● LOW:{Colors.ENDC}         {self.statistics['low_findings']:<48}║")
+        print(f"  ║ {Colors.INFO}● INFO:{Colors.ENDC}        {self.statistics['info_findings']:<48}║")
+        print(f"  ╠════════════════════════════════════════════════════════════════╣")
+        print(f"  ║ {Colors.OKGREEN}✓ Verified Findings:{Colors.ENDC} {self.statistics['verified_findings']:<42}║")
+        print(f"  ╚════════════════════════════════════════════════════════════════╝\n")
+
+        # Confidence Distribution
+        print(f"{Colors.BOLD}{Colors.OKCYAN}█ CONFIDENCE DISTRIBUTION{Colors.ENDC}\n")
+        conf_summary = exec_summary['confidence_summary']
+        print(f"  {Colors.OKGREEN}● Verified (95-100%):{Colors.ENDC}  {conf_summary['verified']}")
+        print(f"  {Colors.OKBLUE}● High (75-94%):{Colors.ENDC}       {conf_summary['high']}")
+        print(f"  {Colors.WARNING}● Medium (50-74%):{Colors.ENDC}     {conf_summary['medium']}")
+        print(f"  {Colors.FAIL}● Low (0-49%):{Colors.ENDC}         {conf_summary['low']}\n")
+
+        # Key Concerns
+        if exec_summary['key_concerns']:
+            print(f"{Colors.BOLD}{Colors.WARNING}█ TOP SECURITY CONCERNS{Colors.ENDC}\n")
+            for i, concern in enumerate(exec_summary['key_concerns'], 1):
+                severity_color = self._get_color_for_severity(concern['severity'])
+                conf_badge = self._get_confidence_badge(concern['confidence_level'])
+                print(f"  {i}. {severity_color}[{concern['severity']}]{Colors.ENDC} {concern['issue']}")
+                print(f"     Module: {concern['module']} │ {conf_badge}")
+                print()
+
+        # Module Summary
+        print(f"{Colors.BOLD}{Colors.OKCYAN}█ MODULE ASSESSMENT SUMMARY{Colors.ENDC}\n")
+        print(f"  {'Module':<30} {'Findings':<10} {'Status':<10}")
+        print(f"  {'-'*60}")
+        for module, count in sorted(self.statistics['module_counts'].items()):
+            print(f"  {module:<30} {count:<10} {Colors.OKGREEN}✓ Complete{Colors.ENDC}")
+
+        print("\n" + "="*80)
+        print(f"\n{Colors.BOLD}💾 Generate full reports with:{Colors.ENDC}")
+        print(f"   report {self.agent.get('agent_id', 'AGENT_ID')} html    # Interactive HTML report")
+        print(f"   report {self.agent.get('agent_id', 'AGENT_ID')} all     # All formats (HTML/MD/JSON)\n")
+
+    def _get_color_for_severity(self, severity):
+        """Get terminal color for severity level"""
+        colors = {
+            'CRITICAL': Colors.CRITICAL,
+            'HIGH': Colors.HIGH,
+            'MEDIUM': Colors.MEDIUM,
+            'LOW': Colors.LOW,
+            'INFO': Colors.INFO
+        }
+        return colors.get(severity.upper(), Colors.ENDC)
+
+    def _get_color_for_risk(self, risk_level):
+        """Get terminal color for risk level"""
+        colors = {
+            'CRITICAL': Colors.CRITICAL,
+            'HIGH': Colors.FAIL,
+            'MEDIUM': Colors.WARNING,
+            'LOW': Colors.OKBLUE,
+            'MINIMAL': Colors.OKGREEN
+        }
+        return colors.get(risk_level, Colors.ENDC)
+
+    def _get_confidence_badge(self, confidence_level):
+        """Get colored confidence badge"""
+        badges = {
+            'verified': f"{Colors.OKGREEN}✓ Verified{Colors.ENDC}",
+            'high': f"{Colors.OKBLUE}◆ High Confidence{Colors.ENDC}",
+            'medium': f"{Colors.WARNING}◆ Medium Confidence{Colors.ENDC}",
+            'low': f"{Colors.FAIL}◆ Low Confidence{Colors.ENDC}"
+        }
+        return badges.get(confidence_level.lower(), f"◆ {confidence_level}")
 
     def generate_json_report(self):
         """Generate complete report in JSON format"""
         report = {
             'metadata': {
                 'report_generated': datetime.now().isoformat(),
-                'report_version': '1.0',
-                'framework': 'C2 Security Assessment Framework'
+                'report_version': '2.0',
+                'framework': 'C2 Security Assessment Framework - Enhanced',
+                'confidence_scoring_enabled': True
             },
             'agent_info': self.agent,
             'executive_summary': self.generate_executive_summary(),
             'statistics': self.statistics,
             'findings_by_severity': dict(self.findings_by_severity),
             'findings_by_module': dict(self.findings_by_module),
+            'findings_by_confidence': dict(self.findings_by_confidence),
             'raw_results': self.results
         }
 
         return report
 
     def generate_markdown_report(self):
-        """Generate professional Markdown report"""
+        """Generate professional Markdown report with confidence scoring"""
         exec_summary = self.generate_executive_summary()
         risk_score = exec_summary['risk_score']
         risk_level = exec_summary['risk_level']
@@ -175,71 +342,103 @@ class ReportGenerator:
         md = []
 
         # Header
-        md.append("# Security Assessment Report")
+        md.append("# 🔒 Security Assessment Report")
         md.append("")
         md.append(f"**Generated:** {exec_summary['assessment_date']}")
-        md.append(f"**Framework:** C2 Security Assessment Framework v1.0")
+        md.append(f"**Framework:** C2 Security Assessment Framework v2.0 (Enhanced)")
+        md.append(f"**Confidence Scoring:** Enabled")
         md.append("")
         md.append("---")
         md.append("")
 
         # Executive Summary
-        md.append("## Executive Summary")
+        md.append("## 📊 Executive Summary")
         md.append("")
-        md.append(f"**Target System:** {exec_summary['target_system']}")
+        md.append(f"**Target System:** `{exec_summary['target_system']}`")
         md.append(f"**Platform:** {exec_summary['platform']}")
         md.append(f"**Assessment Date:** {exec_summary['assessment_date']}")
+        md.append(f"**Modules Assessed:** {exec_summary['modules_assessed']}")
         md.append("")
-        md.append(f"### Overall Risk Assessment")
+
+        # Risk Assessment
+        md.append(f"### 🎯 Overall Risk Assessment")
         md.append("")
-        md.append(f"**Risk Level:** {risk_level}")
+        md.append(f"**Risk Level:** `{risk_level}`")
         md.append(f"**Risk Score:** {risk_score}/100")
         md.append("")
 
         # Risk meter visualization
+        filled = '█' * (risk_score // 5)
+        empty = '░' * (20 - risk_score // 5)
         md.append("```")
-        md.append(f"Risk Score: [{'=' * (risk_score // 5)}{'.' * (20 - risk_score // 5)}] {risk_score}%")
+        md.append(f"Risk: [{filled}{empty}] {risk_score}%")
         md.append("```")
         md.append("")
 
         # Statistics
-        md.append("### Key Statistics")
+        md.append("### 📈 Key Statistics")
         md.append("")
-        md.append(f"- **Total Findings:** {self.statistics['total_findings']}")
-        md.append(f"- **Critical Issues:** {self.statistics['critical_findings']}")
-        md.append(f"- **High Severity Issues:** {self.statistics['high_findings']}")
-        md.append(f"- **Medium Severity Issues:** {self.statistics['medium_findings']}")
-        md.append(f"- **Low Severity Issues:** {self.statistics['low_findings']}")
-        md.append(f"- **Informational Items:** {self.statistics['info_findings']}")
-        md.append(f"- **Modules Assessed:** {self.statistics['modules_run']}")
+        md.append(f"| Metric | Count |")
+        md.append(f"|--------|-------|")
+        md.append(f"| **Total Findings** | {self.statistics['total_findings']} |")
+        md.append(f"| 🔴 Critical Issues | {self.statistics['critical_findings']} |")
+        md.append(f"| 🟠 High Severity | {self.statistics['high_findings']} |")
+        md.append(f"| 🟡 Medium Severity | {self.statistics['medium_findings']} |")
+        md.append(f"| 🔵 Low Severity | {self.statistics['low_findings']} |")
+        md.append(f"| ⚪ Informational | {self.statistics['info_findings']} |")
+        md.append(f"| ✓ Verified Findings | {self.statistics['verified_findings']} |")
+        md.append("")
+
+        # Confidence Distribution
+        md.append("### 🎯 Confidence Distribution")
+        md.append("")
+        md.append("| Confidence Level | Count | Description |")
+        md.append("|------------------|-------|-------------|")
+        conf_summary = exec_summary['confidence_summary']
+        md.append(f"| ✓ Verified (95-100%) | {conf_summary['verified']} | Multi-method verification |")
+        md.append(f"| ◆ High (75-94%) | {conf_summary['high']} | Strong evidence |")
+        md.append(f"| ◆ Medium (50-74%) | {conf_summary['medium']} | Moderate confidence |")
+        md.append(f"| ◆ Low (0-49%) | {conf_summary['low']} | Requires validation |")
         md.append("")
 
         # Severity Distribution Chart
-        md.append("### Findings Distribution")
+        md.append("### 📊 Findings Distribution")
         md.append("")
-        md.append("| Severity | Count | Percentage |")
-        md.append("|----------|-------|------------|")
+        md.append("| Severity | Count | Percentage | Confidence Weighted |")
+        md.append("|----------|-------|------------|---------------------|")
         total = self.statistics['total_findings'] or 1
         for severity in ['critical', 'high', 'medium', 'low', 'info']:
             count = self.statistics['severity_counts'].get(severity, 0)
             pct = (count / total) * 100
-            md.append(f"| {severity.capitalize()} | {count} | {pct:.1f}% |")
+
+            # Calculate average confidence for this severity
+            findings = self.findings_by_severity.get(severity, [])
+            if findings:
+                avg_conf = sum(f.get('confidence_score', 0) for f in findings) / len(findings)
+            else:
+                avg_conf = 0
+
+            emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🔵', 'info': '⚪'}.get(severity, '•')
+            md.append(f"| {emoji} {severity.capitalize()} | {count} | {pct:.1f}% | {avg_conf:.0f}% |")
         md.append("")
 
         # Key Concerns
         if exec_summary['key_concerns']:
-            md.append("### Key Security Concerns")
+            md.append("### ⚠️ Top Security Concerns")
             md.append("")
             for i, concern in enumerate(exec_summary['key_concerns'], 1):
-                md.append(f"{i}. **[{concern['severity']}]** {concern['issue']}")
-                md.append(f"   - Module: {concern['module']}")
+                emoji = {'CRITICAL': '🔴', 'HIGH': '🟠'}.get(concern['severity'], '⚠️')
+                conf_badge = concern['confidence_level'].upper()
+                md.append(f"{i}. {emoji} **[{concern['severity']}]** {concern['issue']}")
+                md.append(f"   - **Module:** {concern['module']}")
+                md.append(f"   - **Confidence:** {conf_badge} ({concern['confidence']}%)")
                 md.append("")
 
         md.append("---")
         md.append("")
 
         # Detailed Findings by Severity
-        md.append("## Detailed Findings")
+        md.append("## 🔍 Detailed Findings")
         md.append("")
 
         severity_order = ['critical', 'high', 'medium', 'low', 'info']
@@ -261,9 +460,14 @@ class ReportGenerator:
             md.append("")
 
             for i, finding in enumerate(findings, 1):
+                conf_score = finding.get('confidence_score', 0)
+                conf_level = finding.get('confidence_level', 'unknown').upper()
+                verified = "✓ Verified" if finding.get('verified', False) else ""
+
                 md.append(f"#### {severity.upper()}-{i}: {finding.get('finding', 'N/A')}")
                 md.append("")
                 md.append(f"**Module:** {finding.get('module', 'N/A')}")
+                md.append(f"**Confidence:** {conf_level} ({conf_score}%) {verified}")
                 md.append("")
                 md.append(f"**Description:**")
                 md.append(f"{finding.get('description', 'N/A')}")
@@ -271,65 +475,95 @@ class ReportGenerator:
                 md.append(f"**Remediation:**")
                 md.append(f"{finding.get('remediation', 'N/A')}")
                 md.append("")
+
+                # Add OS-specific info if available
+                if 'os_specific' in finding:
+                    md.append(f"*OS: {finding['os_specific']}*")
+                    md.append("")
+
                 md.append("---")
                 md.append("")
 
         # Module Summary
-        md.append("## Assessment Module Summary")
+        md.append("## 📦 Assessment Module Summary")
         md.append("")
-        md.append("| Module | Findings | Status |")
-        md.append("|--------|----------|--------|")
+        md.append("| Module | Findings | Average Confidence | Status |")
+        md.append("|--------|----------|-------------------|--------|")
 
-        for module, count in self.statistics['module_counts'].items():
-            status = "✅ Complete"
-            md.append(f"| {module} | {count} | {status} |")
+        for module, count in sorted(self.statistics['module_counts'].items()):
+            module_findings = self.findings_by_module.get(module, [])
+            if module_findings:
+                avg_conf = sum(f.get('confidence_score', 0) for f in module_findings) / len(module_findings)
+            else:
+                avg_conf = 0
+
+            md.append(f"| {module} | {count} | {avg_conf:.0f}% | ✅ Complete |")
 
         md.append("")
 
         # Recommendations
-        md.append("## Recommendations")
+        md.append("## 💡 Recommendations")
         md.append("")
-        md.append("### Immediate Actions (Critical Priority)")
+        md.append("### 🚨 Immediate Actions (Critical Priority)")
         md.append("")
 
-        critical_findings = self.findings_by_severity.get('critical', [])
+        critical_findings = sorted(
+            self.findings_by_severity.get('critical', []),
+            key=lambda x: x.get('confidence_score', 0),
+            reverse=True
+        )
+
         if critical_findings:
-            for finding in critical_findings:
-                md.append(f"- {finding.get('remediation', 'N/A')}")
+            for i, finding in enumerate(critical_findings, 1):
+                conf = finding.get('confidence_score', 0)
+                md.append(f"{i}. {finding.get('remediation', 'N/A')} *(Confidence: {conf}%)*")
         else:
-            md.append("- No critical issues identified")
+            md.append("✅ No critical issues identified")
 
         md.append("")
-        md.append("### High Priority Actions")
+        md.append("### ⚠️ High Priority Actions")
         md.append("")
 
-        high_findings = self.findings_by_severity.get('high', [])
+        high_findings = sorted(
+            self.findings_by_severity.get('high', []),
+            key=lambda x: x.get('confidence_score', 0),
+            reverse=True
+        )
+
         if high_findings:
-            for finding in high_findings[:5]:  # Top 5
-                md.append(f"- {finding.get('remediation', 'N/A')}")
+            for i, finding in enumerate(high_findings[:5], 1):  # Top 5
+                conf = finding.get('confidence_score', 0)
+                md.append(f"{i}. {finding.get('remediation', 'N/A')} *(Confidence: {conf}%)*")
         else:
-            md.append("- No high priority issues identified")
+            md.append("✅ No high priority issues identified")
 
         md.append("")
         md.append("---")
         md.append("")
 
         # Footer
-        md.append("## Report Information")
+        md.append("## ℹ️ Report Information")
         md.append("")
         md.append(f"- **Report Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        md.append(f"- **Framework Version:** 1.0")
+        md.append(f"- **Framework Version:** 2.0 (Enhanced with Confidence Scoring)")
         md.append(f"- **Agent ID:** {self.agent.get('agent_id', 'N/A')}")
+        md.append(f"- **Total Assessment Time:** {len(self.results)} module executions")
         md.append("")
         md.append("---")
         md.append("")
         md.append("*This report was generated by the C2 Security Assessment Framework*")
         md.append("")
+        md.append("**Enhanced Features:**")
+        md.append("- ✓ Multi-method verification")
+        md.append("- ✓ Confidence scoring (0-100%)")
+        md.append("- ✓ OS-specific detection (Linux/Windows/macOS)")
+        md.append("- ✓ Production-ready enterprise testing")
+        md.append("")
 
         return "\n".join(md)
 
     def generate_html_report(self):
-        """Generate professional HTML report"""
+        """Generate enhanced professional HTML report with charts and confidence scoring"""
         exec_summary = self.generate_executive_summary()
         risk_score = exec_summary['risk_score']
         risk_level = exec_summary['risk_level']
@@ -344,12 +578,24 @@ class ReportGenerator:
         }
         risk_color = risk_colors.get(risk_level, '#6c757d')
 
+        # Prepare chart data
+        severity_data = []
+        for sev in ['critical', 'high', 'medium', 'low', 'info']:
+            count = self.statistics['severity_counts'].get(sev, 0)
+            severity_data.append(f"{{name: '{sev.capitalize()}', value: {count}}}")
+
+        confidence_data = []
+        conf_summary = exec_summary['confidence_summary']
+        for level, count in conf_summary.items():
+            confidence_data.append(f"{{name: '{level.capitalize()}', value: {count}}}")
+
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Security Assessment Report - {exec_summary['target_system']}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <style>
         * {{
             margin: 0;
@@ -358,61 +604,74 @@ class ReportGenerator:
         }}
 
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
             color: #333;
-            background: #f5f5f5;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 20px;
+            min-height: 100vh;
         }}
 
         .container {{
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
-            padding: 40px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            padding: 0;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            border-radius: 12px;
+            overflow: hidden;
         }}
 
         header {{
-            border-bottom: 4px solid #007bff;
-            padding-bottom: 20px;
-            margin-bottom: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
         }}
 
-        h1 {{
-            color: #007bff;
+        header h1 {{
             font-size: 2.5em;
             margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }}
+
+        header .subtitle {{
+            font-size: 1.1em;
+            opacity: 0.9;
+        }}
+
+        .content {{
+            padding: 40px;
         }}
 
         h2 {{
-            color: #0056b3;
-            margin-top: 30px;
-            margin-bottom: 15px;
+            color: #667eea;
+            margin-top: 40px;
+            margin-bottom: 20px;
             padding-bottom: 10px;
-            border-bottom: 2px solid #e9ecef;
+            border-bottom: 3px solid #667eea;
+            font-size: 1.8em;
+        }}
+
+        h2:first-child {{
+            margin-top: 0;
         }}
 
         h3 {{
-            color: #495057;
-            margin-top: 20px;
-            margin-bottom: 10px;
-        }}
-
-        .metadata {{
-            color: #6c757d;
-            font-size: 0.9em;
-            margin-bottom: 20px;
+            color: #764ba2;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 1.4em;
         }}
 
         .risk-score {{
             background: linear-gradient(135deg, {risk_color} 0%, {risk_color}dd 100%);
             color: white;
-            padding: 30px;
-            border-radius: 10px;
+            padding: 40px;
+            border-radius: 12px;
             text-align: center;
             margin: 30px 0;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
         }}
 
         .risk-score h2 {{
@@ -423,23 +682,31 @@ class ReportGenerator:
         }}
 
         .risk-score .score {{
-            font-size: 4em;
+            font-size: 5em;
             font-weight: bold;
-            margin: 10px 0;
+            margin: 15px 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }}
 
         .stats-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 20px;
-            margin: 20px 0;
+            margin: 30px 0;
         }}
 
         .stat-card {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 4px solid #007bff;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 25px;
+            border-radius: 12px;
+            border-left: 5px solid #667eea;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+
+        .stat-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
         }}
 
         .stat-card.critical {{
@@ -459,44 +726,70 @@ class ReportGenerator:
         }}
 
         .stat-card h3 {{
-            margin: 0;
-            font-size: 0.9em;
+            margin: 0 0 10px 0;
+            font-size: 0.95em;
             color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }}
 
         .stat-card .value {{
-            font-size: 2.5em;
+            font-size: 3em;
             font-weight: bold;
             color: #212529;
+        }}
+
+        .chart-container {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }}
+
+        .chart-box {{
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }}
+
+        .chart-box h3 {{
+            text-align: center;
+            margin-top: 0;
         }}
 
         .finding {{
             background: #fff;
             border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 20px;
+            border-radius: 12px;
+            padding: 25px;
             margin: 20px 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+            transition: box-shadow 0.2s;
+        }}
+
+        .finding:hover {{
+            box-shadow: 0 8px 16px rgba(0,0,0,0.12);
         }}
 
         .finding.critical {{
-            border-left: 5px solid #dc3545;
+            border-left: 6px solid #dc3545;
         }}
 
         .finding.high {{
-            border-left: 5px solid #fd7e14;
+            border-left: 6px solid #fd7e14;
         }}
 
         .finding.medium {{
-            border-left: 5px solid #ffc107;
+            border-left: 6px solid #ffc107;
         }}
 
         .finding.low {{
-            border-left: 5px solid #17a2b8;
+            border-left: 6px solid #17a2b8;
         }}
 
         .finding.info {{
-            border-left: 5px solid #6c757d;
+            border-left: 6px solid #6c757d;
         }}
 
         .finding-header {{
@@ -504,16 +797,25 @@ class ReportGenerator:
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
         }}
 
         .finding-title {{
-            font-size: 1.2em;
+            font-size: 1.3em;
             font-weight: bold;
             color: #212529;
+            flex: 1;
         }}
 
-        .severity-badge {{
-            padding: 5px 15px;
+        .badges {{
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+
+        .severity-badge, .confidence-badge {{
+            padding: 6px 16px;
             border-radius: 20px;
             color: white;
             font-size: 0.85em;
@@ -542,67 +844,103 @@ class ReportGenerator:
             background: #6c757d;
         }}
 
+        .confidence-badge {{
+            background: #6c757d;
+        }}
+
+        .confidence-badge.verified {{
+            background: #28a745;
+        }}
+
+        .confidence-badge.high {{
+            background: #17a2b8;
+        }}
+
+        .confidence-badge.medium {{
+            background: #ffc107;
+            color: #212529;
+        }}
+
+        .confidence-badge.low {{
+            background: #dc3545;
+        }}
+
         .finding-section {{
-            margin: 10px 0;
+            margin: 15px 0;
         }}
 
         .finding-label {{
             font-weight: bold;
             color: #495057;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
+            display: block;
         }}
 
         .finding-content {{
             color: #212529;
-            padding-left: 20px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            line-height: 1.7;
         }}
 
         table {{
             width: 100%;
             border-collapse: collapse;
             margin: 20px 0;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            overflow: hidden;
         }}
 
         th, td {{
-            padding: 12px;
+            padding: 15px;
             text-align: left;
-            border-bottom: 1px solid #dee2e6;
         }}
 
         th {{
-            background: #007bff;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.9em;
         }}
 
-        tr:hover {{
+        tr:nth-child(even) {{
             background: #f8f9fa;
         }}
 
+        tr:hover {{
+            background: #e9ecef;
+        }}
+
         .key-concern {{
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 4px;
+            background: linear-gradient(135deg, #fff3cd 0%, #ffe9a0 100%);
+            border-left: 5px solid #ffc107;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }}
 
         footer {{
-            margin-top: 50px;
-            padding-top: 20px;
-            border-top: 2px solid #e9ecef;
+            margin-top: 60px;
+            padding: 30px 40px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             text-align: center;
             color: #6c757d;
-            font-size: 0.9em;
+            border-top: 3px solid #667eea;
         }}
 
         .progress-bar {{
             width: 100%;
-            height: 30px;
+            height: 40px;
             background: #e9ecef;
-            border-radius: 15px;
+            border-radius: 20px;
             overflow: hidden;
-            margin: 10px 0;
+            margin: 20px 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
         }}
 
         .progress-fill {{
@@ -613,157 +951,319 @@ class ReportGenerator:
             justify-content: center;
             color: white;
             font-weight: bold;
-            transition: width 0.3s ease;
+            font-size: 1.1em;
+            transition: width 0.5s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }}
+
+        .info-box {{
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-left: 5px solid #2196f3;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }}
+
+        @media print {{
+            body {{
+                background: white;
+            }}
+            .container {{
+                box-shadow: none;
+            }}
+        }}
+
+        @media (max-width: 768px) {{
+            .chart-container {{
+                grid-template-columns: 1fr;
+            }}
+
+            .stats-grid {{
+                grid-template-columns: 1fr;
+            }}
         }}
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Security Assessment Report</h1>
-            <div class="metadata">
-                <p><strong>Generated:</strong> {exec_summary['assessment_date']}</p>
-                <p><strong>Framework:</strong> C2 Security Assessment Framework v1.0</p>
-            </div>
+            <h1>🔒 Security Assessment Report</h1>
+            <div class="subtitle">C2 Security Assessment Framework v2.0 - Enhanced with Confidence Scoring</div>
+            <div class="subtitle" style="margin-top: 10px;">Generated: {exec_summary['assessment_date']}</div>
         </header>
 
-        <section id="executive-summary">
-            <h2>Executive Summary</h2>
-            <p><strong>Target System:</strong> {exec_summary['target_system']}</p>
-            <p><strong>Platform:</strong> {exec_summary['platform']}</p>
-            <p><strong>Assessment Date:</strong> {exec_summary['assessment_date']}</p>
+        <div class="content">
+            <section id="executive-summary">
+                <h2>📊 Executive Summary</h2>
 
-            <div class="risk-score">
-                <h2>Overall Risk Assessment</h2>
-                <div class="score">{risk_score}/100</div>
-                <h3>{risk_level} RISK</h3>
-            </div>
+                <div class="info-box">
+                    <strong>Target System:</strong> {exec_summary['target_system']}<br>
+                    <strong>Platform:</strong> {exec_summary['platform']}<br>
+                    <strong>Assessment Date:</strong> {exec_summary['assessment_date']}<br>
+                    <strong>Modules Assessed:</strong> {exec_summary['modules_assessed']}<br>
+                    <strong>Verified Findings:</strong> {exec_summary['verified_findings']} out of {self.statistics['total_findings']} total
+                </div>
 
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: {risk_score}%;">
-                    {risk_score}%
+                <div class="risk-score">
+                    <h2>Overall Risk Assessment</h2>
+                    <div class="score">{risk_score}/100</div>
+                    <h3>{risk_level} RISK</h3>
                 </div>
-            </div>
 
-            <h3>Key Statistics</h3>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Total Findings</h3>
-                    <div class="value">{self.statistics['total_findings']}</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {risk_score}%;">
+                        Risk Score: {risk_score}%
+                    </div>
                 </div>
-                <div class="stat-card critical">
-                    <h3>Critical</h3>
-                    <div class="value">{self.statistics['critical_findings']}</div>
+
+                <h3>📈 Key Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Findings</h3>
+                        <div class="value">{self.statistics['total_findings']}</div>
+                    </div>
+                    <div class="stat-card critical">
+                        <h3>🔴 Critical</h3>
+                        <div class="value">{self.statistics['critical_findings']}</div>
+                    </div>
+                    <div class="stat-card high">
+                        <h3>🟠 High</h3>
+                        <div class="value">{self.statistics['high_findings']}</div>
+                    </div>
+                    <div class="stat-card medium">
+                        <h3>🟡 Medium</h3>
+                        <div class="value">{self.statistics['medium_findings']}</div>
+                    </div>
+                    <div class="stat-card low">
+                        <h3>🔵 Low</h3>
+                        <div class="value">{self.statistics['low_findings']}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>⚪ Info</h3>
+                        <div class="value">{self.statistics['info_findings']}</div>
+                    </div>
                 </div>
-                <div class="stat-card high">
-                    <h3>High</h3>
-                    <div class="value">{self.statistics['high_findings']}</div>
+
+                <h3>📊 Interactive Charts</h3>
+                <div class="chart-container">
+                    <div class="chart-box">
+                        <h3>Findings by Severity</h3>
+                        <canvas id="severityChart"></canvas>
+                    </div>
+                    <div class="chart-box">
+                        <h3>Confidence Distribution</h3>
+                        <canvas id="confidenceChart"></canvas>
+                    </div>
                 </div>
-                <div class="stat-card medium">
-                    <h3>Medium</h3>
-                    <div class="value">{self.statistics['medium_findings']}</div>
-                </div>
-                <div class="stat-card low">
-                    <h3>Low</h3>
-                    <div class="value">{self.statistics['low_findings']}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Info</h3>
-                    <div class="value">{self.statistics['info_findings']}</div>
-                </div>
-            </div>
 """
 
         # Key Concerns
         if exec_summary['key_concerns']:
             html += """
-            <h3>Key Security Concerns</h3>
+                <h3>⚠️ Top Security Concerns</h3>
 """
-            for concern in exec_summary['key_concerns']:
+            for i, concern in enumerate(exec_summary['key_concerns'], 1):
                 html += f"""
-            <div class="key-concern">
-                <strong>[{concern['severity']}]</strong> {concern['issue']}<br>
-                <small>Module: {concern['module']}</small>
-            </div>
+                <div class="key-concern">
+                    <strong>{i}. [{concern['severity']}]</strong> {concern['issue']}<br>
+                    <small>Module: {concern['module']} | Confidence: {concern['confidence_level'].upper()} ({concern['confidence']}%)</small>
+                </div>
 """
 
         html += """
-        </section>
+            </section>
 
-        <section id="detailed-findings">
-            <h2>Detailed Findings</h2>
+            <section id="detailed-findings">
+                <h2>🔍 Detailed Findings</h2>
 """
 
         # Detailed findings by severity
         severity_order = ['critical', 'high', 'medium', 'low', 'info']
+        severity_icons = {
+            'critical': '🔴',
+            'high': '🟠',
+            'medium': '🟡',
+            'low': '🔵',
+            'info': '⚪'
+        }
 
         for severity in severity_order:
             findings = self.findings_by_severity.get(severity, [])
             if not findings:
                 continue
 
+            icon = severity_icons.get(severity, '•')
             html += f"""
-            <h3>{severity.upper()} Severity ({len(findings)} findings)</h3>
+                <h3>{icon} {severity.upper()} Severity ({len(findings)} findings)</h3>
 """
 
             for i, finding in enumerate(findings, 1):
+                conf_score = finding.get('confidence_score', 0)
+                conf_level = finding.get('confidence_level', 'unknown')
+                verified = finding.get('verified', False)
+
                 html += f"""
-            <div class="finding {severity}">
-                <div class="finding-header">
-                    <div class="finding-title">{finding.get('finding', 'N/A')}</div>
-                    <div class="severity-badge {severity}">{severity.upper()}</div>
+                <div class="finding {severity}">
+                    <div class="finding-header">
+                        <div class="finding-title">{finding.get('finding', 'N/A')}</div>
+                        <div class="badges">
+                            <div class="severity-badge {severity}">{severity.upper()}</div>
+                            <div class="confidence-badge {conf_level}">{conf_level.upper()} {conf_score}%</div>
+                            {'<div class="confidence-badge verified">✓ VERIFIED</div>' if verified else ''}
+                        </div>
+                    </div>
+                    <div class="finding-section">
+                        <span class="finding-label">Module:</span>
+                        <div class="finding-content">{finding.get('module', 'N/A')}</div>
+                    </div>
+                    <div class="finding-section">
+                        <span class="finding-label">Description:</span>
+                        <div class="finding-content">{finding.get('description', 'N/A').replace(chr(10), '<br>')}</div>
+                    </div>
+                    <div class="finding-section">
+                        <span class="finding-label">Remediation:</span>
+                        <div class="finding-content">{finding.get('remediation', 'N/A').replace(chr(10), '<br>')}</div>
+                    </div>
+"""
+                if 'os_specific' in finding:
+                    html += f"""
+                    <div class="finding-section">
+                        <span class="finding-label">Operating System:</span>
+                        <div class="finding-content">{finding['os_specific']}</div>
+                    </div>
+"""
+                html += """
                 </div>
-                <div class="finding-section">
-                    <div class="finding-label">Module:</div>
-                    <div class="finding-content">{finding.get('module', 'N/A')}</div>
-                </div>
-                <div class="finding-section">
-                    <div class="finding-label">Description:</div>
-                    <div class="finding-content">{finding.get('description', 'N/A')}</div>
-                </div>
-                <div class="finding-section">
-                    <div class="finding-label">Remediation:</div>
-                    <div class="finding-content">{finding.get('remediation', 'N/A')}</div>
-                </div>
-            </div>
 """
 
         html += """
-        </section>
+            </section>
 
-        <section id="module-summary">
-            <h2>Assessment Module Summary</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Module</th>
-                        <th>Findings</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <section id="module-summary">
+                <h2>📦 Assessment Module Summary</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Module</th>
+                            <th>Findings</th>
+                            <th>Avg Confidence</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
 """
 
-        for module, count in self.statistics['module_counts'].items():
+        for module, count in sorted(self.statistics['module_counts'].items()):
+            module_findings = self.findings_by_module.get(module, [])
+            if module_findings:
+                avg_conf = sum(f.get('confidence_score', 0) for f in module_findings) / len(module_findings)
+            else:
+                avg_conf = 0
+
             html += f"""
-                    <tr>
-                        <td>{module}</td>
-                        <td>{count}</td>
-                        <td>✅ Complete</td>
-                    </tr>
+                        <tr>
+                            <td>{module}</td>
+                            <td>{count}</td>
+                            <td>{avg_conf:.0f}%</td>
+                            <td>✅ Complete</td>
+                        </tr>
 """
 
         html += """
-                </tbody>
-            </table>
-        </section>
+                    </tbody>
+                </table>
+            </section>
+        </div>
 
         <footer>
+            <h3>ℹ️ Report Information</h3>
             <p><strong>Report Generated:</strong> """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + """</p>
+            <p><strong>Framework Version:</strong> 2.0 (Enhanced with Confidence Scoring)</p>
             <p><strong>Agent ID:</strong> """ + self.agent.get('agent_id', 'N/A') + """</p>
-            <p><em>This report was generated by the C2 Security Assessment Framework</em></p>
+            <p><strong>Total Modules Executed:</strong> """ + str(len(self.results)) + """</p>
+            <p style="margin-top: 20px;"><em>This report was generated by the C2 Security Assessment Framework</em></p>
+            <p style="margin-top: 10px;">
+                <strong>Enhanced Features:</strong><br>
+                ✓ Multi-method verification &nbsp;|&nbsp;
+                ✓ Confidence scoring (0-100%) &nbsp;|&nbsp;
+                ✓ OS-specific detection &nbsp;|&nbsp;
+                ✓ Production-ready testing
+            </p>
         </footer>
     </div>
+
+    <script>
+        // Severity Distribution Chart
+        const severityCtx = document.getElementById('severityChart').getContext('2d');
+        new Chart(severityCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Critical', 'High', 'Medium', 'Low', 'Info'],
+                datasets: [{
+                    data: [""" + str(self.statistics['critical_findings']) + """,
+                           """ + str(self.statistics['high_findings']) + """,
+                           """ + str(self.statistics['medium_findings']) + """,
+                           """ + str(self.statistics['low_findings']) + """,
+                           """ + str(self.statistics['info_findings']) + """],
+                    backgroundColor: [
+                        '#dc3545',
+                        '#fd7e14',
+                        '#ffc107',
+                        '#17a2b8',
+                        '#6c757d'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        // Confidence Distribution Chart
+        const confidenceCtx = document.getElementById('confidenceChart').getContext('2d');
+        new Chart(confidenceCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Verified', 'High', 'Medium', 'Low'],
+                datasets: [{
+                    label: 'Findings',
+                    data: [""" + str(conf_summary['verified']) + """,
+                           """ + str(conf_summary['high']) + """,
+                           """ + str(conf_summary['medium']) + """,
+                           """ + str(conf_summary['low']) + """],
+                    backgroundColor: [
+                        '#28a745',
+                        '#17a2b8',
+                        '#ffc107',
+                        '#dc3545'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                }
+            }
+        });
+    </script>
 </body>
 </html>
 """
@@ -796,21 +1296,21 @@ class ReportGenerator:
             with open(json_path, 'w') as f:
                 json.dump(self.generate_json_report(), f, indent=2)
             saved_files['json'] = json_path
-            print(f"[+] JSON report saved: {json_path}")
+            print(f"{Colors.OKGREEN}[+] JSON report saved: {json_path}{Colors.ENDC}")
 
-        if format in ['markdown', 'all']:
+        if format in ['markdown', 'md', 'all']:
             md_path = os.path.join(output_dir, f"{base_filename}.md")
             with open(md_path, 'w') as f:
                 f.write(self.generate_markdown_report())
             saved_files['markdown'] = md_path
-            print(f"[+] Markdown report saved: {md_path}")
+            print(f"{Colors.OKGREEN}[+] Markdown report saved: {md_path}{Colors.ENDC}")
 
         if format in ['html', 'all']:
             html_path = os.path.join(output_dir, f"{base_filename}.html")
             with open(html_path, 'w') as f:
                 f.write(self.generate_html_report())
             saved_files['html'] = html_path
-            print(f"[+] HTML report saved: {html_path}")
+            print(f"{Colors.OKGREEN}[+] HTML report saved: {html_path}{Colors.ENDC}")
 
         return saved_files
 
@@ -834,7 +1334,7 @@ def generate_report_from_server(server_url, agent_id, output_dir="reports", form
         # Fetch agent data
         agents_response = requests.get(f"{server_url}/api/agents", timeout=10)
         if agents_response.status_code != 200:
-            print(f"[!] Failed to fetch agents: {agents_response.status_code}")
+            print(f"{Colors.FAIL}[!] Failed to fetch agents: {agents_response.status_code}{Colors.ENDC}")
             return None
 
         agents = agents_response.json().get('agents', [])
@@ -846,29 +1346,39 @@ def generate_report_from_server(server_url, agent_id, output_dir="reports", form
                 break
 
         if not agent_data:
-            print(f"[!] Agent {agent_id} not found")
+            print(f"{Colors.FAIL}[!] Agent {agent_id} not found{Colors.ENDC}")
             return None
 
         # Fetch results
         results_response = requests.get(f"{server_url}/api/results/{agent_id}", timeout=10)
         if results_response.status_code != 200:
-            print(f"[!] Failed to fetch results: {results_response.status_code}")
+            print(f"{Colors.FAIL}[!] Failed to fetch results: {results_response.status_code}{Colors.ENDC}")
             return None
 
         results_data = results_response.json().get('results', [])
 
         if not results_data:
-            print(f"[!] No results found for agent {agent_id}")
+            print(f"{Colors.WARNING}[!] No results found for agent {agent_id}{Colors.ENDC}")
             return None
 
         # Generate report
         generator = ReportGenerator(agent_data, results_data)
-        saved_files = generator.save_report(output_dir, format)
 
-        return saved_files
+        # Show console summary if format is 'all' or 'console'
+        if format in ['all', 'console']:
+            generator.print_console_report()
+
+        # Save files if not console-only
+        if format != 'console':
+            saved_files = generator.save_report(output_dir, format)
+            return saved_files
+
+        return {'console': 'displayed'}
 
     except Exception as e:
-        print(f"[!] Error generating report: {e}")
+        print(f"{Colors.FAIL}[!] Error generating report: {e}{Colors.ENDC}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -876,9 +1386,23 @@ if __name__ == '__main__':
     import sys
 
     if len(sys.argv) < 3:
-        print("Usage: python report_generator.py <server_url> <agent_id> [format] [output_dir]")
-        print("Formats: json, markdown, html, all (default: all)")
-        print("Example: python report_generator.py http://localhost:8542 abc123 all reports/")
+        print(f"""
+{Colors.BOLD}{Colors.HEADER}C2 Security Assessment Framework - Report Generator{Colors.ENDC}
+
+Usage: python report_generator.py <server_url> <agent_id> [format] [output_dir]
+
+Formats:
+  - console   : Color-coded terminal output only
+  - json      : Machine-readable JSON report
+  - markdown  : GitHub-flavored markdown report
+  - html      : Interactive HTML report with charts
+  - all       : Generate all formats + console output (default)
+
+Examples:
+  python report_generator.py http://localhost:8542 abc123 console
+  python report_generator.py http://localhost:8542 abc123 html reports/
+  python report_generator.py http://localhost:8542 abc123 all reports/
+        """)
         sys.exit(1)
 
     server_url = sys.argv[1]
@@ -886,13 +1410,14 @@ if __name__ == '__main__':
     format_type = sys.argv[3] if len(sys.argv) > 3 else 'all'
     output_dir = sys.argv[4] if len(sys.argv) > 4 else 'reports'
 
-    print(f"[*] Generating report for agent: {agent_id}")
-    print(f"[*] Format: {format_type}")
+    print(f"\n{Colors.BOLD}[*] Generating report for agent: {agent_id}{Colors.ENDC}")
+    print(f"{Colors.BOLD}[*] Format: {format_type}{Colors.ENDC}\n")
 
     result = generate_report_from_server(server_url, agent_id, output_dir, format_type)
 
     if result:
-        print("\n[+] Report generation complete!")
-        print(f"[*] Files saved in: {output_dir}/")
+        print(f"\n{Colors.OKGREEN}{Colors.BOLD}[+] Report generation complete!{Colors.ENDC}")
+        if format_type != 'console':
+            print(f"{Colors.BOLD}[*] Files saved in: {output_dir}/{Colors.ENDC}\n")
     else:
-        print("\n[!] Report generation failed")
+        print(f"\n{Colors.FAIL}[!] Report generation failed{Colors.ENDC}")
