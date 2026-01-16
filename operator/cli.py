@@ -9,7 +9,12 @@ import json
 import sys
 import os
 from datetime import datetime
+
+# Add current directory to path to import modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent_generator import AgentGenerator
+from config import get_config
+from report_generator import generate_report_from_server
 
 class OperatorCLI:
     def __init__(self, server_url):
@@ -126,7 +131,7 @@ class OperatorCLI:
         except requests.exceptions.RequestException as e:
             print(f"[!] Connection error: {e}")
 
-    def generate_agent(self, platform, operator_url):
+    def generate_agent(self, platform, operator_url=None):
         """Generate a new agent"""
         try:
             generator = AgentGenerator(operator_url)
@@ -135,6 +140,7 @@ class OperatorCLI:
             print(f"\n[+] Agent generated successfully!")
             print(f"[*] Agent ID:     {result['agent_id']}")
             print(f"[*] Platform:     {result['platform']}")
+            print(f"[*] Operator URL: {generator.operator_url}")
             print(f"[*] Output Path:  {result['output_path']}")
             print(f"\n[*] Deploy this agent on the target {platform} system")
             print(f"[*] Run: python3 {result['output_path']}\n")
@@ -165,6 +171,33 @@ class OperatorCLI:
 
         print()
 
+    def generate_report(self, agent_id, format_type='all', output_dir='reports'):
+        """Generate comprehensive security assessment report"""
+        try:
+            print(f"\n[*] Generating {format_type} report for agent {agent_id}...")
+
+            result = generate_report_from_server(
+                self.server_url,
+                agent_id,
+                output_dir,
+                format_type
+            )
+
+            if result:
+                print("\n[+] Report generation complete!")
+                print(f"[*] Reports saved in: {output_dir}/\n")
+
+                for format_name, file_path in result.items():
+                    print(f"  - {format_name.upper()}: {file_path}")
+
+                print()
+            else:
+                print("\n[!] Report generation failed")
+                print("[*] Make sure the agent has completed assessments\n")
+
+        except Exception as e:
+            print(f"[!] Error generating report: {e}")
+
     def interactive_mode(self):
         """Run CLI in interactive mode"""
         print("""
@@ -174,14 +207,15 @@ class OperatorCLI:
     ╚═══════════════════════════════════════════════════════════════╝
 
     Commands:
-      agents                           - List all agents
-      results <agent_id>              - Get results for an agent
-      module <agent_id> <module_name> - Run assessment module
-      shell <agent_id> <command>      - Run shell command
-      generate <platform> <url>       - Generate new agent
-      modules                         - List available modules
-      help                            - Show this help
-      exit                            - Exit CLI
+      agents                             - List all agents
+      results <agent_id>                 - Get results for an agent
+      module <agent_id> <module_name>    - Run assessment module
+      shell <agent_id> <command>         - Run shell command
+      report <agent_id> [format] [dir]   - Generate report (all/json/html/md)
+      generate <platform> [url]          - Generate new agent (URL optional)
+      modules                            - List available modules
+      help                               - Show this help
+      exit                               - Exit CLI
 
         """)
 
@@ -200,7 +234,18 @@ class OperatorCLI:
                     break
 
                 elif command == "help":
-                    self.interactive_mode()
+                    print("""
+    Commands:
+      agents                             - List all agents
+      results <agent_id>                 - Get results for an agent
+      module <agent_id> <module_name>    - Run assessment module
+      shell <agent_id> <command>         - Run shell command
+      report <agent_id> [format] [dir]   - Generate report (all/json/html/md)
+      generate <platform> [url]          - Generate new agent (URL optional)
+      modules                            - List available modules
+      help                               - Show this help
+      exit                               - Exit CLI
+                    """)
 
                 elif command == "agents":
                     self.list_agents()
@@ -224,14 +269,26 @@ class OperatorCLI:
                     self.run_shell_command(parts[1], parts[2])
 
                 elif command == "generate":
-                    if len(parts) < 3:
-                        print("[!] Usage: generate <platform> <operator_url>")
+                    if len(parts) < 2:
+                        print("[!] Usage: generate <platform> [operator_url]")
                         print("[!] Platform: windows or linux")
+                        print("[!] URL is optional - will auto-detect if not provided")
                         continue
-                    self.generate_agent(parts[1], parts[2])
+                    operator_url = parts[2] if len(parts) >= 3 else None
+                    self.generate_agent(parts[1], operator_url)
 
                 elif command == "modules":
                     self.show_modules()
+
+                elif command == "report":
+                    if len(parts) < 2:
+                        print("[!] Usage: report <agent_id> [format] [output_dir]")
+                        print("[!] Formats: all, json, html, markdown")
+                        continue
+                    agent_id = parts[1]
+                    format_type = parts[2] if len(parts) >= 3 else 'all'
+                    output_dir = parts[3] if len(parts) >= 4 else 'reports'
+                    self.generate_report(agent_id, format_type, output_dir)
 
                 else:
                     print(f"[!] Unknown command: {command}")
@@ -243,10 +300,15 @@ class OperatorCLI:
                 print(f"[!] Error: {e}")
 
 def main():
-    if len(sys.argv) < 2:
-        server_url = "http://localhost:5000"
-    else:
+    # Auto-detect server URL from config or command line
+    if len(sys.argv) >= 2:
         server_url = sys.argv[1]
+    else:
+        # Load from config
+        config = get_config()
+        server_url = config.get_server_url()
+        print(f"[*] Auto-detected server URL: {server_url}")
+        print("[*] You can override with: python cli.py <server_url>\n")
 
     cli = OperatorCLI(server_url)
 
@@ -254,12 +316,16 @@ def main():
     try:
         response = requests.get(f"{server_url}/api/health", timeout=5)
         if response.status_code == 200:
+            health_data = response.json()
             print(f"[+] Connected to operator server at {server_url}")
+            print(f"[*] Active agents: {health_data.get('active_agents', 0)}")
+            print(f"[*] Total agents: {health_data.get('total_agents', 0)}\n")
         else:
             print(f"[!] Server returned status code: {response.status_code}")
     except requests.exceptions.RequestException:
         print(f"[!] Warning: Cannot connect to operator server at {server_url}")
         print("[*] Make sure the operator server is running")
+        print("[*] Start server with: python operator/server.py\n")
 
     cli.interactive_mode()
 
