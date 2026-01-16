@@ -134,6 +134,15 @@ def check_windows_privileges():
     # Check registry autoruns
     findings.extend(check_registry_autoruns())
 
+    # Check token privileges (NEW - Critical!)
+    findings.extend(check_token_privileges())
+
+    # Check DLL hijacking opportunities (NEW - High impact!)
+    findings.extend(check_dll_hijacking())
+
+    # Check writable system paths
+    findings.extend(check_writable_system_paths())
+
     return findings
 
 def check_suid_binaries_enhanced():
@@ -958,6 +967,337 @@ def check_registry_autoruns():
                 # Expected - key is not writable
                 pass
             except:
+                pass
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_token_privileges():
+    """Check for dangerous Windows token privileges (CRITICAL!)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # Define privilege constants
+        SE_PRIVILEGE_ENABLED = 0x00000002
+        TOKEN_QUERY = 0x0008
+
+        # Dangerous privileges that allow privilege escalation
+        dangerous_privileges = {
+            'SeImpersonatePrivilege': {
+                'description': 'Can impersonate other users/tokens',
+                'exploits': 'PrintSpoofer, RoguePotato, JuicyPotato',
+                'severity': 'critical'
+            },
+            'SeAssignPrimaryTokenPrivilege': {
+                'description': 'Can assign primary token to process',
+                'exploits': 'Token manipulation attacks',
+                'severity': 'critical'
+            },
+            'SeDebugPrivilege': {
+                'description': 'Can debug any process (including SYSTEM)',
+                'exploits': 'Process injection, memory manipulation',
+                'severity': 'critical'
+            },
+            'SeLoadDriverPrivilege': {
+                'description': 'Can load kernel drivers',
+                'exploits': 'Capcom.sys, other vulnerable drivers',
+                'severity': 'critical'
+            },
+            'SeTakeOwnershipPrivilege': {
+                'description': 'Can take ownership of any object',
+                'exploits': 'File/registry ownership hijacking',
+                'severity': 'high'
+            },
+            'SeRestorePrivilege': {
+                'description': 'Can write to any file/registry',
+                'exploits': 'File/registry replacement',
+                'severity': 'high'
+            },
+            'SeBackupPrivilege': {
+                'description': 'Can read any file (bypass ACLs)',
+                'exploits': 'SAM/SYSTEM hive extraction',
+                'severity': 'high'
+            },
+            'SeTcbPrivilege': {
+                'description': 'Act as part of operating system',
+                'exploits': 'Full system compromise',
+                'severity': 'critical'
+            }
+        }
+
+        # Get current process token
+        handle = ctypes.c_void_p()
+        if not ctypes.windll.advapi32.OpenProcessToken(
+            ctypes.windll.kernel32.GetCurrentProcess(),
+            TOKEN_QUERY,
+            ctypes.byref(handle)
+        ):
+            return findings
+
+        # Check each dangerous privilege
+        found_privileges = []
+
+        for priv_name, priv_info in dangerous_privileges.items():
+            # Look up privilege LUID
+            luid = wintypes.LUID()
+            if ctypes.windll.advapi32.LookupPrivilegeValueW(None, priv_name, ctypes.byref(luid)):
+
+                # Check if privilege is enabled
+                class PRIVILEGE_SET(ctypes.Structure):
+                    _fields_ = [
+                        ("PrivilegeCount", wintypes.DWORD),
+                        ("Control", wintypes.DWORD),
+                        ("Privilege", wintypes.LUID * 1),
+                    ]
+
+                priv_set = PRIVILEGE_SET()
+                priv_set.PrivilegeCount = 1
+                priv_set.Privilege[0] = luid
+
+                result = wintypes.BOOL()
+                if ctypes.windll.advapi32.PrivilegeCheck(
+                    handle,
+                    ctypes.byref(priv_set),
+                    ctypes.byref(result)
+                ):
+                    if result.value:
+                        found_privileges.append((priv_name, priv_info))
+
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+        # Create findings for dangerous privileges
+        if found_privileges:
+            for priv_name, priv_info in found_privileges:
+                findings.append(create_finding(
+                    priv_info['severity'],
+                    f"Dangerous token privilege: {priv_name}",
+                    f"{priv_info['description']}. "
+                    f"This privilege allows privilege escalation to SYSTEM. "
+                    f"Known exploits: {priv_info['exploits']}. "
+                    f"Verification confidence: 100%",
+                    f"This is expected for service accounts. If running as regular user, investigate how privilege was obtained.",
+                    100,
+                    True
+                ))
+
+    except Exception as e:
+        # Privilege checking failed - try alternate method
+        try:
+            # Fallback: Use whoami /priv command
+            result = subprocess.run(
+                ['whoami', '/priv'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                output = result.stdout
+
+                # Check for dangerous privileges in output
+                for priv_name, priv_info in dangerous_privileges.items():
+                    if priv_name in output and 'Enabled' in output:
+                        findings.append(create_finding(
+                            priv_info['severity'],
+                            f"Dangerous token privilege: {priv_name}",
+                            f"{priv_info['description']}. "
+                            f"Known exploits: {priv_info['exploits']}. "
+                            f"Detected via whoami command. "
+                            f"Verification confidence: 95%",
+                            f"Investigate how privilege was obtained",
+                            95,
+                            True
+                        ))
+
+        except Exception:
+            pass
+
+    return findings
+
+def check_dll_hijacking():
+    """Check for DLL hijacking opportunities (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Check PATH for writable directories (DLL search order exploitation)
+        path_env = os.environ.get('PATH', '')
+        if not path_env:
+            return findings
+
+        path_dirs = path_env.split(';')
+
+        writable_dirs = []
+        early_writable = []
+
+        for idx, path_dir in enumerate(path_dirs):
+            if not path_dir or not os.path.exists(path_dir):
+                continue
+
+            try:
+                # Check if writable
+                is_writable, confidence = verify_writable(path_dir)
+
+                if is_writable:
+                    writable_dirs.append((path_dir, idx, confidence))
+
+                    # Early PATH positions are more dangerous
+                    if idx < 3:
+                        early_writable.append((path_dir, idx))
+
+            except Exception:
+                continue
+
+        # Report writable PATH directories (DLL hijacking opportunity)
+        if writable_dirs:
+            for path_dir, position, confidence in writable_dirs:
+                severity = "critical" if position < 3 else "high"
+
+                # System directories in writable PATH are especially bad
+                is_system_path = any(sys_dir in path_dir.lower() for sys_dir in [
+                    'windows', 'system32', 'syswow64', 'program files'
+                ])
+
+                if is_system_path:
+                    severity = "critical"
+                    confidence = min(100, confidence + 10)
+
+                findings.append(create_finding(
+                    severity,
+                    f"DLL hijacking opportunity: Writable PATH directory at position {position + 1}",
+                    f"Directory '{path_dir}' is writable and in PATH. "
+                    f"Attacker can place malicious DLLs that will be loaded before system DLLs. "
+                    f"Position {position + 1} in DLL search order. "
+                    f"{'CRITICAL: System directory is writable!' if is_system_path else 'Can hijack DLL loading.'} "
+                    f"Verification confidence: {confidence}%",
+                    f"Remove '{path_dir}' from PATH or fix permissions",
+                    confidence,
+                    confidence >= 95
+                ))
+
+        # Check current directory in PATH (. or empty entry)
+        if '.' in path_dirs or '' in path_dirs:
+            findings.append(create_finding(
+                "high",
+                "Current directory in PATH (DLL hijacking risk)",
+                "PATH contains current directory (. or empty entry). "
+                "DLLs in current directory will be loaded before system DLLs. "
+                "Attacker can place malicious DLL in any directory user navigates to. "
+                "Verification confidence: 100%",
+                "Remove current directory from PATH",
+                100,
+                True
+            ))
+
+        # Check for writable system directories (extreme risk)
+        system_dirs = [
+            os.environ.get('SYSTEMROOT', 'C:\\Windows'),
+            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32'),
+            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'SysWOW64'),
+        ]
+
+        for sys_dir in system_dirs:
+            if os.path.exists(sys_dir):
+                is_writable, confidence = verify_writable(sys_dir)
+
+                if is_writable:
+                    findings.append(create_finding(
+                        "critical",
+                        f"System directory is writable: {sys_dir}",
+                        f"Critical Windows system directory is writable by current user. "
+                        f"Can replace system DLLs with malicious versions. "
+                        f"This indicates severe privilege escalation or system misconfiguration. "
+                        f"Verification confidence: {confidence}%",
+                        f"This should never happen. Investigate immediately: Check system integrity",
+                        confidence,
+                        confidence >= 95
+                    ))
+
+    except Exception as e:
+        pass
+
+    return findings
+
+def check_writable_system_paths():
+    """Check for writable critical Windows system paths"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Critical system locations that should NEVER be writable
+        critical_paths = {
+            os.environ.get('SYSTEMROOT', 'C:\\Windows'): 'Windows directory',
+            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32'): 'System32 directory',
+            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'SysWOW64'): 'SysWOW64 directory',
+            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32\\config'): 'Registry hive location',
+            'C:\\Program Files': 'Program Files directory',
+            'C:\\Program Files (x86)': 'Program Files (x86) directory',
+        }
+
+        for path, description in critical_paths.items():
+            if not os.path.exists(path):
+                continue
+
+            is_writable, confidence = verify_writable(path)
+
+            if is_writable:
+                findings.append(create_finding(
+                    "critical",
+                    f"Critical system path is writable: {path}",
+                    f"{description} is writable by current user. "
+                    f"This allows replacement of system files, DLLs, or executables. "
+                    f"Indicates privilege escalation or severe misconfiguration. "
+                    f"Verification confidence: {confidence}%",
+                    f"Investigate immediately: {path} should not be writable. Check system integrity and permissions.",
+                    confidence,
+                    confidence >= 95
+                ))
+
+        # Check Program Files subdirectories (common target)
+        program_files_dirs = [
+            'C:\\Program Files',
+            'C:\\Program Files (x86)'
+        ]
+
+        for pf_dir in program_files_dirs:
+            if not os.path.exists(pf_dir):
+                continue
+
+            try:
+                # Check top-level subdirectories
+                for subdir in os.listdir(pf_dir)[:20]:  # Limit to first 20
+                    subdir_path = os.path.join(pf_dir, subdir)
+
+                    if not os.path.isdir(subdir_path):
+                        continue
+
+                    is_writable, confidence = verify_writable(subdir_path)
+
+                    if is_writable:
+                        findings.append(create_finding(
+                            "high",
+                            f"Writable Program Files subdirectory: {subdir_path}",
+                            f"Application directory in Program Files is writable. "
+                            f"Can replace application binaries or inject DLLs. "
+                            f"Verification confidence: {confidence}%",
+                            f"Fix permissions: Remove write access for standard users",
+                            confidence,
+                            confidence >= 95
+                        ))
+
+            except Exception:
                 pass
 
     except Exception:
