@@ -143,6 +143,13 @@ def check_windows_privileges():
     # Check writable system paths
     findings.extend(check_writable_system_paths())
 
+    # Production-ready checks (NEW)
+    findings.extend(check_uac_settings())
+    findings.extend(check_service_permissions())
+    findings.extend(check_user_group_memberships())
+    findings.extend(check_stored_credentials())
+    findings.extend(check_modifiable_registry_keys())
+
     return findings
 
 def check_suid_binaries_enhanced():
@@ -975,63 +982,83 @@ def check_registry_autoruns():
     return findings
 
 def check_token_privileges():
-    """Check for dangerous Windows token privileges (CRITICAL!)"""
+    """Check for dangerous Windows token privileges - PRODUCTION ENHANCED"""
     findings = []
 
     if not is_windows():
         return findings
 
+    # Dangerous privileges that allow privilege escalation
+    dangerous_privileges = {
+        'SeImpersonatePrivilege': {
+            'description': 'Can impersonate other users/tokens',
+            'exploits': 'PrintSpoofer, RoguePotato, JuicyPotato',
+            'severity': 'critical'
+        },
+        'SeAssignPrimaryTokenPrivilege': {
+            'description': 'Can assign primary token to process',
+            'exploits': 'Token manipulation attacks',
+            'severity': 'critical'
+        },
+        'SeDebugPrivilege': {
+            'description': 'Can debug any process (including SYSTEM)',
+            'exploits': 'Process injection, memory manipulation',
+            'severity': 'critical'
+        },
+        'SeLoadDriverPrivilege': {
+            'description': 'Can load kernel drivers',
+            'exploits': 'Capcom.sys, other vulnerable drivers',
+            'severity': 'critical'
+        },
+        'SeTakeOwnershipPrivilege': {
+            'description': 'Can take ownership of any object',
+            'exploits': 'File/registry ownership hijacking',
+            'severity': 'high'
+        },
+        'SeRestorePrivilege': {
+            'description': 'Can write to any file/registry',
+            'exploits': 'File/registry replacement',
+            'severity': 'high'
+        },
+        'SeBackupPrivilege': {
+            'description': 'Can read any file (bypass ACLs)',
+            'exploits': 'SAM/SYSTEM hive extraction',
+            'severity': 'high'
+        },
+        'SeTcbPrivilege': {
+            'description': 'Act as part of operating system',
+            'exploits': 'Full system compromise',
+            'severity': 'critical'
+        },
+        'SeCreateTokenPrivilege': {
+            'description': 'Can create access tokens',
+            'exploits': 'Create SYSTEM token',
+            'severity': 'critical'
+        },
+        'SeSecurityPrivilege': {
+            'description': 'Can manage audit and security logs',
+            'exploits': 'Cover tracks and bypass auditing',
+            'severity': 'medium'
+        }
+    }
+
     try:
         import ctypes
         from ctypes import wintypes
 
-        # Define privilege constants
+        # Define constants
         SE_PRIVILEGE_ENABLED = 0x00000002
+        SE_PRIVILEGE_ENABLED_BY_DEFAULT = 0x00000001
+        SE_PRIVILEGE_REMOVED = 0x00000004
         TOKEN_QUERY = 0x0008
+        TOKEN_ADJUST_PRIVILEGES = 0x0020
 
-        # Dangerous privileges that allow privilege escalation
-        dangerous_privileges = {
-            'SeImpersonatePrivilege': {
-                'description': 'Can impersonate other users/tokens',
-                'exploits': 'PrintSpoofer, RoguePotato, JuicyPotato',
-                'severity': 'critical'
-            },
-            'SeAssignPrimaryTokenPrivilege': {
-                'description': 'Can assign primary token to process',
-                'exploits': 'Token manipulation attacks',
-                'severity': 'critical'
-            },
-            'SeDebugPrivilege': {
-                'description': 'Can debug any process (including SYSTEM)',
-                'exploits': 'Process injection, memory manipulation',
-                'severity': 'critical'
-            },
-            'SeLoadDriverPrivilege': {
-                'description': 'Can load kernel drivers',
-                'exploits': 'Capcom.sys, other vulnerable drivers',
-                'severity': 'critical'
-            },
-            'SeTakeOwnershipPrivilege': {
-                'description': 'Can take ownership of any object',
-                'exploits': 'File/registry ownership hijacking',
-                'severity': 'high'
-            },
-            'SeRestorePrivilege': {
-                'description': 'Can write to any file/registry',
-                'exploits': 'File/registry replacement',
-                'severity': 'high'
-            },
-            'SeBackupPrivilege': {
-                'description': 'Can read any file (bypass ACLs)',
-                'exploits': 'SAM/SYSTEM hive extraction',
-                'severity': 'high'
-            },
-            'SeTcbPrivilege': {
-                'description': 'Act as part of operating system',
-                'exploits': 'Full system compromise',
-                'severity': 'critical'
-            }
-        }
+        # Define LUID_AND_ATTRIBUTES structure
+        class LUID_AND_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [
+                ("Luid", wintypes.LUID),
+                ("Attributes", wintypes.DWORD),
+            ]
 
         # Get current process token
         handle = ctypes.c_void_p()
@@ -1040,58 +1067,107 @@ def check_token_privileges():
             TOKEN_QUERY,
             ctypes.byref(handle)
         ):
-            return findings
+            # API failed, use fallback
+            raise Exception("OpenProcessToken failed")
 
-        # Check each dangerous privilege
-        found_privileges = []
+        # Query all privileges using GetTokenInformation - PRODUCTION METHOD
+        # First, get the buffer size needed
+        TokenPrivileges = 3  # TokenInformation class
+        return_length = wintypes.DWORD()
 
-        for priv_name, priv_info in dangerous_privileges.items():
-            # Look up privilege LUID
-            luid = wintypes.LUID()
-            if ctypes.windll.advapi32.LookupPrivilegeValueW(None, priv_name, ctypes.byref(luid)):
+        # Call with null buffer to get size
+        ctypes.windll.advapi32.GetTokenInformation(
+            handle,
+            TokenPrivileges,
+            None,
+            0,
+            ctypes.byref(return_length)
+        )
 
-                # Check if privilege is enabled
-                class PRIVILEGE_SET(ctypes.Structure):
-                    _fields_ = [
-                        ("PrivilegeCount", wintypes.DWORD),
-                        ("Control", wintypes.DWORD),
-                        ("Privilege", wintypes.LUID * 1),
-                    ]
+        # Allocate buffer and get privileges
+        buffer_size = return_length.value
+        buffer = (ctypes.c_byte * buffer_size)()
 
-                priv_set = PRIVILEGE_SET()
-                priv_set.PrivilegeCount = 1
-                priv_set.Privilege[0] = luid
+        if ctypes.windll.advapi32.GetTokenInformation(
+            handle,
+            TokenPrivileges,
+            ctypes.byref(buffer),
+            buffer_size,
+            ctypes.byref(return_length)
+        ):
+            # Parse TOKEN_PRIVILEGES structure
+            # First DWORD is PrivilegeCount
+            privilege_count = ctypes.cast(buffer, ctypes.POINTER(wintypes.DWORD)).contents.value
 
-                result = wintypes.BOOL()
-                if ctypes.windll.advapi32.PrivilegeCheck(
-                    handle,
-                    ctypes.byref(priv_set),
-                    ctypes.byref(result)
+            # Array of LUID_AND_ATTRIBUTES starts after the count
+            privileges_ptr = ctypes.cast(
+                ctypes.addressof(buffer) + ctypes.sizeof(wintypes.DWORD),
+                ctypes.POINTER(LUID_AND_ATTRIBUTES)
+            )
+
+            # Check each privilege
+            for i in range(privilege_count):
+                priv = privileges_ptr[i]
+
+                # Get privilege name from LUID
+                name_size = wintypes.DWORD(256)
+                name_buffer = ctypes.create_unicode_buffer(name_size.value)
+
+                if ctypes.windll.advapi32.LookupPrivilegeNameW(
+                    None,
+                    ctypes.byref(priv.Luid),
+                    name_buffer,
+                    ctypes.byref(name_size)
                 ):
-                    if result.value:
-                        found_privileges.append((priv_name, priv_info))
+                    priv_name = name_buffer.value
+
+                    # Check if this is a dangerous privilege
+                    if priv_name in dangerous_privileges:
+                        priv_info = dangerous_privileges[priv_name]
+
+                        # Check privilege state
+                        is_enabled = (priv.Attributes & SE_PRIVILEGE_ENABLED) != 0
+                        is_enabled_by_default = (priv.Attributes & SE_PRIVILEGE_ENABLED_BY_DEFAULT) != 0
+                        is_removed = (priv.Attributes & SE_PRIVILEGE_REMOVED) != 0
+
+                        # Only report if enabled or can be enabled
+                        if is_enabled and not is_removed:
+                            state_desc = "ENABLED"
+                            if is_enabled_by_default:
+                                state_desc += " (by default)"
+
+                            findings.append(create_finding(
+                                priv_info['severity'],
+                                f"Dangerous token privilege ACTIVE: {priv_name}",
+                                f"{priv_info['description']}. "
+                                f"Privilege state: {state_desc}. "
+                                f"This privilege allows privilege escalation to SYSTEM. "
+                                f"Known exploits: {priv_info['exploits']}. "
+                                f"Verification confidence: 100%",
+                                f"This is expected for service accounts. If running as regular user, investigate how privilege was obtained.",
+                                100,
+                                True
+                            ))
+                        elif not is_removed:
+                            # Privilege present but disabled - can potentially be enabled
+                            findings.append(create_finding(
+                                priv_info['severity'],
+                                f"Dangerous token privilege available: {priv_name}",
+                                f"{priv_info['description']}. "
+                                f"Privilege state: DISABLED (can be enabled). "
+                                f"Privilege can potentially be activated by the process. "
+                                f"Known exploits: {priv_info['exploits']}. "
+                                f"Verification confidence: 100%",
+                                f"Review why process has this privilege assigned",
+                                100,
+                                True
+                            ))
 
         ctypes.windll.kernel32.CloseHandle(handle)
 
-        # Create findings for dangerous privileges
-        if found_privileges:
-            for priv_name, priv_info in found_privileges:
-                findings.append(create_finding(
-                    priv_info['severity'],
-                    f"Dangerous token privilege: {priv_name}",
-                    f"{priv_info['description']}. "
-                    f"This privilege allows privilege escalation to SYSTEM. "
-                    f"Known exploits: {priv_info['exploits']}. "
-                    f"Verification confidence: 100%",
-                    f"This is expected for service accounts. If running as regular user, investigate how privilege was obtained.",
-                    100,
-                    True
-                ))
-
     except Exception as e:
-        # Privilege checking failed - try alternate method
+        # API method failed - use command-line fallback (PRODUCTION FALLBACK)
         try:
-            # Fallback: Use whoami /priv command
             result = subprocess.run(
                 ['whoami', '/priv'],
                 capture_output=True,
@@ -1102,20 +1178,33 @@ def check_token_privileges():
             if result.returncode == 0:
                 output = result.stdout
 
-                # Check for dangerous privileges in output
-                for priv_name, priv_info in dangerous_privileges.items():
-                    if priv_name in output and 'Enabled' in output:
-                        findings.append(create_finding(
-                            priv_info['severity'],
-                            f"Dangerous token privilege: {priv_name}",
-                            f"{priv_info['description']}. "
-                            f"Known exploits: {priv_info['exploits']}. "
-                            f"Detected via whoami command. "
-                            f"Verification confidence: 95%",
-                            f"Investigate how privilege was obtained",
-                            95,
-                            True
-                        ))
+                # Parse the privilege table
+                lines = output.split('\n')
+                for line in lines:
+                    for priv_name, priv_info in dangerous_privileges.items():
+                        if priv_name in line:
+                            # Check if enabled
+                            if 'Enabled' in line:
+                                state = 'ENABLED'
+                                confidence = 98
+                            elif 'Disabled' in line:
+                                state = 'DISABLED (can be enabled)'
+                                confidence = 98
+                            else:
+                                continue
+
+                            findings.append(create_finding(
+                                priv_info['severity'],
+                                f"Dangerous token privilege detected: {priv_name}",
+                                f"{priv_info['description']}. "
+                                f"Privilege state: {state}. "
+                                f"Known exploits: {priv_info['exploits']}. "
+                                f"Detected via whoami command. "
+                                f"Verification confidence: {confidence}%",
+                                f"Investigate privilege assignment",
+                                confidence,
+                                confidence >= 95
+                            ))
 
         except Exception:
             pass
@@ -1300,6 +1389,635 @@ def check_writable_system_paths():
             except Exception:
                 pass
 
+    except Exception:
+        pass
+
+    return findings
+
+def check_uac_settings():
+    """Check UAC configuration and bypass opportunities (Windows) - PRODUCTION"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        import winreg
+
+        # Check UAC registry settings
+        uac_keys = {
+            'EnableLUA': ('UAC Enabled', 'Controls whether UAC is enabled system-wide'),
+            'ConsentPromptBehaviorAdmin': ('Admin Consent Prompt', 'Controls UAC prompts for administrators'),
+            'PromptOnSecureDesktop': ('Secure Desktop', 'Controls whether UAC prompts use secure desktop'),
+            'FilterAdministratorToken': ('Admin Token Filtering', 'Filters administrator token for built-in admin'),
+        }
+
+        uac_path = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+        uac_settings = {}
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, uac_path, 0, winreg.KEY_READ)
+
+            for value_name, (display_name, description) in uac_keys.items():
+                try:
+                    value, _ = winreg.QueryValueEx(key, value_name)
+                    uac_settings[value_name] = value
+                except:
+                    uac_settings[value_name] = None
+
+            winreg.CloseKey(key)
+
+            # Analyze UAC configuration
+            enable_lua = uac_settings.get('EnableLUA', 1)
+            consent_prompt = uac_settings.get('ConsentPromptBehaviorAdmin', 5)
+            secure_desktop = uac_settings.get('PromptOnSecureDesktop', 1)
+
+            # Check if UAC is disabled (EnableLUA = 0)
+            if enable_lua == 0:
+                findings.append(create_finding(
+                    "critical",
+                    "UAC is completely disabled",
+                    "User Account Control is disabled system-wide (EnableLUA=0). "
+                    "All applications run with full administrative privileges without prompts. "
+                    "This eliminates a critical security boundary. "
+                    "Verification confidence: 100%",
+                    "Enable UAC: Set EnableLUA to 1 in registry or via Group Policy",
+                    100,
+                    True
+                ))
+
+            # Check if admin consent prompt is disabled (ConsentPromptBehaviorAdmin = 0)
+            elif consent_prompt == 0:
+                findings.append(create_finding(
+                    "high",
+                    "UAC admin consent prompt disabled",
+                    "Administrator consent prompt is disabled (ConsentPromptBehaviorAdmin=0). "
+                    "Administrators can elevate without any prompt. "
+                    "This weakens UAC protection significantly. "
+                    "Verification confidence: 100%",
+                    "Set ConsentPromptBehaviorAdmin to 2 or higher via Group Policy",
+                    100,
+                    True
+                ))
+
+            # Check if secure desktop is disabled (PromptOnSecureDesktop = 0)
+            if secure_desktop == 0:
+                findings.append(create_finding(
+                    "medium",
+                    "UAC secure desktop disabled",
+                    "UAC prompts do not use secure desktop (PromptOnSecureDesktop=0). "
+                    "UAC dialogs can potentially be automated or manipulated. "
+                    "Increases risk of UAC bypass attacks. "
+                    "Verification confidence: 100%",
+                    "Enable secure desktop: Set PromptOnSecureDesktop to 1",
+                    100,
+                    True
+                ))
+
+            # Check for UAC bypass opportunities via consent.exe
+            system32 = os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32')
+            consent_exe = os.path.join(system32, 'consent.exe')
+
+            if os.path.exists(consent_exe):
+                is_writable, confidence = verify_writable(consent_exe)
+                if is_writable:
+                    findings.append(create_finding(
+                        "critical",
+                        "UAC consent.exe is writable",
+                        f"The UAC consent prompt executable is writable: {consent_exe}. "
+                        "Attacker can replace this to bypass UAC completely. "
+                        "This should never happen on a properly configured system. "
+                        f"Verification confidence: {confidence}%",
+                        "Investigate immediately: Restore proper permissions and check for compromise",
+                        confidence,
+                        confidence >= 95
+                    ))
+
+        except Exception as e:
+            pass
+
+    except ImportError:
+        pass
+    except Exception as e:
+        pass
+
+    return findings
+
+def check_service_permissions():
+    """Check Windows service permissions for weak ACLs - PRODUCTION"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Query all services
+        result = subprocess.run(
+            ['sc', 'query', 'state=', 'all'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            return findings
+
+        # Extract service names
+        services = []
+        for line in result.stdout.split('\n'):
+            if 'SERVICE_NAME:' in line:
+                service_name = line.split(':', 1)[1].strip()
+                services.append(service_name)
+
+        # Check permissions for services (limit to first 30 for performance)
+        dangerous_permissions_found = []
+
+        for service in services[:30]:
+            try:
+                # Get service DACL using sc sdshow
+                result = subprocess.run(
+                    ['sc', 'sdshow', service],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+
+                if result.returncode == 0:
+                    sddl = result.stdout.strip()
+
+                    # Check for weak permissions
+                    # WD = Everyone, AU = Authenticated Users, BU = Built-in Users
+                    # DC = DACL Control, WD = Write DAC, WO = Write Owner
+                    # RP = Read Permissions, WP = Write Properties, CC = Create Child
+                    # SW = Self Write, LC = List Children, RC = Read Control
+
+                    weak_permissions = []
+
+                    # Check for Everyone with dangerous permissions
+                    if 'WD' in sddl or '(A;;' in sddl:
+                        # Look for SERVICE_CHANGE_CONFIG (DC) or SERVICE_ALL_ACCESS (FA)
+                        if '(A;;DCSWRPWPDTLOCRRC;;;WD)' in sddl or '(A;;FA;;;WD)' in sddl:
+                            weak_permissions.append('Everyone has modify/full access')
+                        elif '(A;;DC;;;WD)' in sddl:
+                            weak_permissions.append('Everyone can change service configuration')
+
+                    # Check for Authenticated Users with dangerous permissions
+                    if '(A;;DC;;;AU)' in sddl or '(A;;FA;;;AU)' in sddl:
+                        weak_permissions.append('Authenticated Users can modify service')
+
+                    # Check for Users group with dangerous permissions
+                    if '(A;;DC;;;BU)' in sddl or '(A;;FA;;;BU)' in sddl:
+                        weak_permissions.append('Built-in Users can modify service')
+
+                    if weak_permissions:
+                        # Get service startup type and account
+                        result2 = subprocess.run(
+                            ['sc', 'qc', service],
+                            capture_output=True,
+                            text=True,
+                            timeout=2
+                        )
+
+                        start_type = 'UNKNOWN'
+                        service_account = 'UNKNOWN'
+
+                        if result2.returncode == 0:
+                            for line in result2.stdout.split('\n'):
+                                if 'START_TYPE' in line:
+                                    start_type = line.split(':', 1)[1].strip()
+                                if 'SERVICE_START_NAME' in line:
+                                    service_account = line.split(':', 1)[1].strip()
+
+                        # Higher severity if service runs as SYSTEM
+                        severity = "critical" if 'LocalSystem' in service_account or 'SYSTEM' in service_account else "high"
+
+                        findings.append(create_finding(
+                            severity,
+                            f"Weak service permissions: {service}",
+                            f"Service has weak ACL permissions. {' / '.join(weak_permissions)}. "
+                            f"Service runs as: {service_account}. "
+                            f"Start type: {start_type}. "
+                            f"Attacker can reconfigure service to execute arbitrary code. "
+                            f"Verification confidence: 95%",
+                            f"Fix service permissions: sc sdset {service} <proper_sddl>",
+                            95,
+                            True
+                        ))
+
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_user_group_memberships():
+    """Check for dangerous Windows group memberships - PRODUCTION"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Check current user's group memberships
+        result = subprocess.run(
+            ['whoami', '/groups'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            return findings
+
+        output = result.stdout.lower()
+
+        # Dangerous groups that provide privilege escalation paths
+        dangerous_groups = {
+            'administrators': {
+                'description': 'Full system control',
+                'severity': 'info',
+                'note': 'Already have admin privileges'
+            },
+            'backup operators': {
+                'description': 'Can backup/restore any file (bypass ACLs)',
+                'severity': 'high',
+                'note': 'SeBackupPrivilege and SeRestorePrivilege enable file system access'
+            },
+            'server operators': {
+                'description': 'Can manage services and backups',
+                'severity': 'high',
+                'note': 'Can start/stop services and perform backups'
+            },
+            'account operators': {
+                'description': 'Can create and modify user accounts',
+                'severity': 'high',
+                'note': 'Can create new admin accounts'
+            },
+            'print operators': {
+                'description': 'Can manage printers and load drivers',
+                'severity': 'medium',
+                'note': 'Can potentially load malicious printer drivers'
+            },
+            'remote desktop users': {
+                'description': 'Can connect via RDP',
+                'severity': 'medium',
+                'note': 'Remote access capability'
+            },
+            'hyper-v administrators': {
+                'description': 'Can manage Hyper-V',
+                'severity': 'high',
+                'note': 'VM escape and host access possible'
+            },
+            'event log readers': {
+                'description': 'Can read security event logs',
+                'severity': 'low',
+                'note': 'Can read sensitive audit logs'
+            }
+        }
+
+        found_groups = []
+
+        for group_name, group_info in dangerous_groups.items():
+            if group_name in output:
+                found_groups.append((group_name, group_info))
+
+        if found_groups:
+            for group_name, group_info in found_groups:
+                findings.append(create_finding(
+                    group_info['severity'],
+                    f"Membership in privileged group: {group_name.title()}",
+                    f"User is member of '{group_name.title()}' group. "
+                    f"{group_info['description']}. "
+                    f"{group_info['note']}. "
+                    f"This provides elevated privileges or privilege escalation paths. "
+                    f"Verification confidence: 100%",
+                    "Review group memberships and remove unnecessary privileges",
+                    100,
+                    True
+                ))
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_stored_credentials():
+    """Check for stored credentials in Windows registry and files - PRODUCTION"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Check Windows Credential Manager
+        try:
+            result = subprocess.run(
+                ['cmdkey', '/list'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                output = result.stdout
+                # Count stored credentials
+                credential_count = output.count('Target:')
+
+                if credential_count > 0:
+                    findings.append(create_finding(
+                        "medium",
+                        f"Stored credentials found: {credential_count} entries",
+                        f"Windows Credential Manager contains {credential_count} stored credential(s). "
+                        "These can potentially be extracted using tools like Mimikatz. "
+                        "Credentials may include domain passwords, RDP sessions, and application passwords. "
+                        "Verification confidence: 100%",
+                        "Review stored credentials and remove unnecessary entries: Control Panel > Credential Manager",
+                        100,
+                        True
+                    ))
+        except Exception:
+            pass
+
+        # Check for unattended installation files with passwords
+        unattend_locations = [
+            'C:\\Windows\\Panther\\Unattend.xml',
+            'C:\\Windows\\Panther\\Unattended.xml',
+            'C:\\Windows\\System32\\Sysprep\\unattend.xml',
+            'C:\\Windows\\System32\\Sysprep\\Panther\\unattend.xml',
+        ]
+
+        for unattend_file in unattend_locations:
+            if os.path.exists(unattend_file):
+                try:
+                    # Check if readable
+                    with open(unattend_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read(50000)  # Read first 50KB
+
+                        # Check for password-related tags
+                        if 'password' in content.lower() or 'administratorpassword' in content.lower():
+                            findings.append(create_finding(
+                                "high",
+                                f"Unattended installation file with potential credentials: {unattend_file}",
+                                "Unattended installation file contains password references. "
+                                "These files often contain cleartext or base64-encoded administrator passwords. "
+                                "Common in automated Windows deployments. "
+                                "Verification confidence: 90%",
+                                f"Review file for credentials and remove: {unattend_file}",
+                                90,
+                                True
+                            ))
+                except Exception:
+                    pass
+
+        # Check for common credential locations in registry
+        try:
+            import winreg
+
+            # Check for VNC passwords (notoriously weak encryption)
+            vnc_paths = [
+                (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\RealVNC\vncserver'),
+                (winreg.HKEY_CURRENT_USER, r'Software\RealVNC\vncserver'),
+                (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\TightVNC\Server'),
+                (winreg.HKEY_CURRENT_USER, r'Software\TightVNC\Server'),
+            ]
+
+            for hive, path in vnc_paths:
+                try:
+                    key = winreg.OpenKey(hive, path, 0, winreg.KEY_READ)
+                    try:
+                        password, _ = winreg.QueryValueEx(key, 'Password')
+                        hive_name = "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU"
+
+                        findings.append(create_finding(
+                            "high",
+                            f"VNC password stored in registry: {hive_name}\\{path}",
+                            "VNC server password found in registry. "
+                            "VNC passwords use weak encryption (DES) and can be easily decrypted. "
+                            "This provides remote desktop access to the system. "
+                            "Verification confidence: 100%",
+                            "Use strong VNC authentication or remove VNC if not needed",
+                            100,
+                            True
+                        ))
+                    except:
+                        pass
+                    winreg.CloseKey(key)
+                except:
+                    pass
+
+            # Check for AutoLogon credentials
+            autologon_path = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, autologon_path, 0, winreg.KEY_READ)
+
+                autologon_enabled = False
+                has_password = False
+
+                try:
+                    autologon, _ = winreg.QueryValueEx(key, 'AutoAdminLogon')
+                    autologon_enabled = (autologon == '1')
+                except:
+                    pass
+
+                try:
+                    password, _ = winreg.QueryValueEx(key, 'DefaultPassword')
+                    has_password = (password != '')
+                except:
+                    pass
+
+                if autologon_enabled and has_password:
+                    findings.append(create_finding(
+                        "critical",
+                        "AutoLogon enabled with stored password",
+                        "Windows AutoLogon is enabled with cleartext password in registry. "
+                        "Registry key: HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon. "
+                        "Password is stored in cleartext and can be easily retrieved. "
+                        "Verification confidence: 100%",
+                        "Disable AutoLogon and remove DefaultPassword from registry",
+                        100,
+                        True
+                    ))
+
+                winreg.CloseKey(key)
+            except:
+                pass
+
+        except ImportError:
+            pass
+
+        # Check for Group Policy Preferences passwords (deprecated but still found)
+        gpp_locations = [
+            'C:\\ProgramData\\Microsoft\\Group Policy\\History',
+            'C:\\Windows\\SYSVOL',
+        ]
+
+        for gpp_dir in gpp_locations:
+            if os.path.exists(gpp_dir):
+                try:
+                    # Search for Groups.xml, Services.xml, Scheduledtasks.xml
+                    for root, dirs, files in os.walk(gpp_dir):
+                        for file in files:
+                            if file.lower() in ['groups.xml', 'services.xml', 'scheduledtasks.xml']:
+                                filepath = os.path.join(root, file)
+                                try:
+                                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                        content = f.read(10000)
+                                        if 'cpassword' in content.lower():
+                                            findings.append(create_finding(
+                                                "critical",
+                                                f"Group Policy Preferences password found: {filepath}",
+                                                "Group Policy Preferences file contains encrypted password (cpassword). "
+                                                "Microsoft published the AES key in 2012 - these passwords can be trivially decrypted. "
+                                                "This is a well-known privilege escalation vector. "
+                                                "Verification confidence: 100%",
+                                                "Remove GPP passwords and use LAPS for local admin password management",
+                                                100,
+                                                True
+                                            ))
+                                except:
+                                    pass
+                        # Don't recurse too deep
+                        if len(root.split(os.sep)) > len(gpp_dir.split(os.sep)) + 3:
+                            break
+                except:
+                    pass
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_modifiable_registry_keys():
+    """Check for modifiable registry keys that can lead to privilege escalation - PRODUCTION"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        import winreg
+
+        # Critical registry keys to check
+        critical_keys = [
+            # Image File Execution Options (IFEO) - can hijack application execution
+            (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options', 'IFEO'),
+            # AppInit_DLLs - loaded into every process
+            (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows', 'AppInit DLLs'),
+            # Service keys
+            (winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Services', 'Services'),
+            # Shell Folders
+            (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders', 'Shell Folders'),
+            # Environment Path
+            (winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'System Environment'),
+        ]
+
+        for hive, key_path, description in critical_keys:
+            try:
+                # Try to open with write access
+                key = winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+
+                hive_name = "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU"
+
+                # If we successfully opened with write access, it's modifiable
+                severity = "critical" if description in ['Services', 'AppInit DLLs', 'System Environment'] else "high"
+
+                findings.append(create_finding(
+                    severity,
+                    f"Modifiable critical registry key: {description}",
+                    f"Registry key is writable by current user: {hive_name}\\{key_path}. "
+                    f"Modification of this key can lead to code execution and privilege escalation. "
+                    f"{'Can modify service configurations.' if description == 'Services' else ''}"
+                    f"{'Can inject DLLs into all processes.' if description == 'AppInit DLLs' else ''}"
+                    f"{'Can hijack application execution.' if description == 'IFEO' else ''}"
+                    f"Verification confidence: 100%",
+                    "Investigate why current user has write access to critical registry key. Remove write permissions.",
+                    100,
+                    True
+                ))
+
+                winreg.CloseKey(key)
+
+            except PermissionError:
+                # Expected - key is not writable
+                pass
+            except FileNotFoundError:
+                # Key doesn't exist
+                pass
+            except Exception:
+                pass
+
+        # Check for writable service registry keys individually
+        try:
+            services_key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r'SYSTEM\CurrentControlSet\Services',
+                0,
+                winreg.KEY_READ
+            )
+
+            # Check first 20 services for performance
+            service_count = 0
+            i = 0
+            while service_count < 20:
+                try:
+                    service_name = winreg.EnumKey(services_key, i)
+                    service_path = f'SYSTEM\\CurrentControlSet\\Services\\{service_name}'
+
+                    try:
+                        # Try to open service key with write access
+                        service_key = winreg.OpenKey(
+                            winreg.HKEY_LOCAL_MACHINE,
+                            service_path,
+                            0,
+                            winreg.KEY_READ | winreg.KEY_WRITE
+                        )
+
+                        # Check if service runs as SYSTEM
+                        try:
+                            object_name, _ = winreg.QueryValueEx(service_key, 'ObjectName')
+                            is_system = 'LocalSystem' in object_name or 'SYSTEM' in object_name
+
+                            severity = "critical" if is_system else "high"
+
+                            findings.append(create_finding(
+                                severity,
+                                f"Modifiable service registry key: {service_name}",
+                                f"Service registry key is writable: HKLM\\{service_path}. "
+                                f"Can modify ImagePath to execute arbitrary code. "
+                                f"Service runs as: {object_name}. "
+                                f"This is a direct privilege escalation vector. "
+                                f"Verification confidence: 100%",
+                                f"Fix registry permissions for service: {service_name}",
+                                100,
+                                True
+                            ))
+                        except:
+                            pass
+
+                        winreg.CloseKey(service_key)
+
+                    except PermissionError:
+                        # Expected - service key not writable
+                        pass
+
+                    service_count += 1
+                    i += 1
+
+                except OSError:
+                    # No more services
+                    break
+
+            winreg.CloseKey(services_key)
+
+        except Exception:
+            pass
+
+    except ImportError:
+        pass
     except Exception:
         pass
 
