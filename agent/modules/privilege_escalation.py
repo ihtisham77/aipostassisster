@@ -1,17 +1,36 @@
 """
 Privilege Escalation Assessment Module
 Checks for common privilege escalation vectors and misconfigurations
+Enhanced with OS-specific checks and confidence scoring
 """
 
 import os
 import platform
 import subprocess
-import pwd
-import grp
+import sys
+
+# Import common utilities for verification and confidence scoring
+try:
+    from common_utils import (
+        is_linux, is_windows, is_macos,
+        verify_suid_binary, verify_writable, verify_executable,
+        create_finding, calculate_confidence_score, get_confidence_level,
+        safe_run_command, get_dangerous_binaries
+    )
+except ImportError:
+    # Fallback if common_utils not available
+    def is_linux(): return platform.system().lower() == 'linux'
+    def is_windows(): return platform.system().lower() == 'windows'
+    def is_macos(): return platform.system().lower() == 'darwin'
+    def create_finding(sev, find, desc, rem, conf=None, ver=False):
+        f = {"severity": sev, "finding": find, "description": desc, "remediation": rem}
+        if conf: f["confidence_score"] = conf
+        return f
 
 def check():
     """
     Check for privilege escalation vulnerabilities
+    OS-specific with confidence scoring
     """
     results = {
         "module": "privilege_escalation",
@@ -20,115 +39,211 @@ def check():
     }
 
     try:
-        # Check if running as root
-        if os.geteuid() == 0:
-            results["findings"].append({
-                "severity": "info",
-                "finding": "Running as root",
-                "description": "Agent has root privileges"
-            })
-
-        # Check for SUID binaries
-        suid_findings = check_suid_binaries()
-        if suid_findings:
-            results["findings"].extend(suid_findings)
-
-        # Check sudo configuration
-        sudo_findings = check_sudo_config()
-        if sudo_findings:
-            results["findings"].extend(sudo_findings)
-
-        # Check for writable service files
-        service_findings = check_writable_services()
-        if service_findings:
-            results["findings"].extend(service_findings)
-
-        # Check kernel version
-        kernel_findings = check_kernel_version()
-        if kernel_findings:
-            results["findings"].extend(kernel_findings)
-
-        # Check for writable PATH directories
-        path_findings = check_writable_path()
-        if path_findings:
-            results["findings"].extend(path_findings)
-
-        # Check capabilities
-        cap_findings = check_capabilities()
-        if cap_findings:
-            results["findings"].extend(cap_findings)
+        # OS-specific privilege checks
+        if is_linux() or is_macos():
+            results["findings"].extend(check_linux_privileges())
+        elif is_windows():
+            results["findings"].extend(check_windows_privileges())
+        else:
+            results["findings"].append(create_finding(
+                "info",
+                "Unsupported OS",
+                f"Privilege escalation checks not implemented for {platform.system()}",
+                "Run module on Linux or Windows system",
+                0
+            ))
 
     except Exception as e:
         results["error"] = str(e)
 
     return results
 
-def check_suid_binaries():
-    """Check for SUID binaries that could be exploited"""
+def check_linux_privileges():
+    """Linux-specific privilege escalation checks"""
+    findings = []
+
+    # Check if running as root
+    try:
+        if os.geteuid() == 0:
+            findings.append(create_finding(
+                "info",
+                "Running as root",
+                "Agent has root privileges",
+                "No action needed - informational",
+                100,
+                True
+            ))
+    except:
+        pass
+
+    # Enhanced SUID binary checks
+    findings.extend(check_suid_binaries_enhanced())
+
+    # Enhanced sudo configuration checks
+    findings.extend(check_sudo_config_enhanced())
+
+    # Enhanced writable service files
+    findings.extend(check_writable_services_enhanced())
+
+    # Kernel version information
+    findings.extend(check_kernel_version())
+
+    # Enhanced writable PATH directories
+    findings.extend(check_writable_path_enhanced())
+
+    # Enhanced capabilities check
+    findings.extend(check_capabilities_enhanced())
+
+    # Additional Linux checks
+    findings.extend(check_cron_permissions())
+    findings.extend(check_docker_socket())
+
+    return findings
+
+def check_windows_privileges():
+    """Windows-specific privilege escalation checks"""
+    findings = []
+
+    # Check if running as Administrator
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        findings.append(create_finding(
+            "info",
+            "Running as Administrator" if is_admin else "Running as standard user",
+            f"Agent has {'administrator' if is_admin else 'standard user'} privileges",
+            "No action needed - informational",
+            100,
+            True
+        ))
+    except:
+        pass
+
+    # Check for AlwaysInstallElevated
+    findings.extend(check_always_install_elevated())
+
+    # Check for unquoted service paths
+    findings.extend(check_unquoted_service_paths())
+
+    # Check for writable service binaries
+    findings.extend(check_writable_service_binaries())
+
+    # Check scheduled tasks
+    findings.extend(check_scheduled_tasks())
+
+    # Check registry autoruns
+    findings.extend(check_registry_autoruns())
+
+    return findings
+
+def check_suid_binaries_enhanced():
+    """Enhanced SUID binary checks with multi-method verification"""
     findings = []
 
     try:
         # Common directories to check
-        search_paths = ['/usr/bin', '/usr/local/bin', '/bin', '/sbin', '/usr/sbin']
+        search_paths = ['/usr/bin', '/usr/local/bin', '/bin', '/sbin', '/usr/sbin', '/usr/local/sbin']
 
-        dangerous_binaries = [
-            'nmap', 'vim', 'find', 'bash', 'more', 'less', 'nano',
-            'cp', 'mv', 'python', 'perl', 'ruby', 'lua', 'php',
-            'awk', 'sed', 'tar', 'zip', 'unzip'
-        ]
+        # Get OS-specific dangerous binaries
+        dangerous_binaries = get_dangerous_binaries()
 
+        suid_binaries_found = {}
+
+        # Method 1: Use find command
         for search_path in search_paths:
             if not os.path.exists(search_path):
                 continue
 
             try:
                 result = subprocess.run(
-                    ['find', search_path, '-perm', '-4000', '-type', 'f', '2>/dev/null'],
+                    ['find', search_path, '-perm', '-4000', '-type', 'f'],
                     capture_output=True,
                     text=True,
-                    timeout=10,
-                    shell=False
+                    timeout=10
                 )
 
-                suid_files = result.stdout.strip().split('\n')
+                if result.returncode == 0:
+                    suid_files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
 
-                for suid_file in suid_files:
-                    if suid_file:
-                        basename = os.path.basename(suid_file)
-                        if basename in dangerous_binaries:
-                            findings.append({
-                                "severity": "high",
-                                "finding": f"Dangerous SUID binary: {suid_file}",
-                                "description": f"{basename} with SUID bit can be exploited for privilege escalation",
-                                "remediation": f"Remove SUID bit: chmod u-s {suid_file}"
-                            })
-                        else:
-                            findings.append({
-                                "severity": "medium",
-                                "finding": f"SUID binary found: {suid_file}",
-                                "description": "Review if SUID bit is necessary",
-                                "remediation": "Verify if SUID permission is required"
-                            })
-            except subprocess.TimeoutExpired:
+                    for suid_file in suid_files:
+                        # Use multi-method verification
+                        has_suid, confidence = verify_suid_binary(suid_file)
+
+                        if has_suid:
+                            basename = os.path.basename(suid_file)
+                            suid_binaries_found[suid_file] = {
+                                'basename': basename,
+                                'confidence': confidence,
+                                'dangerous': basename in dangerous_binaries
+                            }
+
+            except (subprocess.TimeoutExpired, Exception):
                 continue
-            except Exception:
-                continue
+
+        # Create findings with confidence scores
+        for suid_file, info in suid_binaries_found.items():
+            basename = info['basename']
+            confidence = info['confidence']
+            is_dangerous = info['dangerous']
+
+            if is_dangerous:
+                # High severity for dangerous binaries
+                findings.append(create_finding(
+                    "high",
+                    f"Dangerous SUID binary: {suid_file}",
+                    f"{basename} with SUID bit can be exploited for privilege escalation. "
+                    f"This binary is known to have privilege escalation techniques. "
+                    f"Verification confidence: {confidence}%",
+                    f"Remove SUID bit: chmod u-s {suid_file}",
+                    confidence,
+                    confidence >= 95
+                ))
+            else:
+                # Medium severity for other SUID binaries
+                findings.append(create_finding(
+                    "medium",
+                    f"SUID binary found: {suid_file}",
+                    f"Binary {basename} has SUID bit set. Review if necessary. "
+                    f"Verification confidence: {confidence}%",
+                    f"Verify if SUID permission is required, or remove: chmod u-s {suid_file}",
+                    confidence,
+                    confidence >= 95
+                ))
 
     except Exception as e:
-        findings.append({
-            "severity": "info",
-            "finding": "SUID check failed",
-            "description": str(e)
-        })
+        findings.append(create_finding(
+            "info",
+            "SUID check encountered error",
+            str(e),
+            "Review system permissions manually",
+            0
+        ))
 
     return findings
 
-def check_sudo_config():
-    """Check sudo configuration for misconfigurations"""
+def check_sudo_config_enhanced():
+    """Enhanced sudo configuration checks with verification"""
     findings = []
 
     try:
-        # Check if user can run sudo
+        # Multi-method verification of sudo access
+        checks = []
+
+        # Method 1: Try sudo -l
+        result = subprocess.run(
+            ['sudo', '-n', '-l'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        sudo_accessible = result.returncode == 0
+        checks.append(sudo_accessible)
+
+        if not sudo_accessible:
+            # Can't check sudo config
+            return findings
+
+        # Method 2: Read sudo output
         result = subprocess.run(
             ['sudo', '-l'],
             capture_output=True,
@@ -136,50 +251,98 @@ def check_sudo_config():
             timeout=5
         )
 
+        if result.returncode != 0:
+            return findings
+
         output = result.stdout.lower()
+        checks.append(len(output) > 0)
+
+        base_confidence = calculate_confidence_score(*checks)
 
         # Check for NOPASSWD
         if 'nopasswd' in output:
-            findings.append({
-                "severity": "high",
-                "finding": "Sudo NOPASSWD configured",
-                "description": "User can run sudo commands without password",
-                "remediation": "Review /etc/sudoers and remove NOPASSWD if not necessary"
-            })
+            # Count occurrences for confidence
+            nopasswd_count = output.count('nopasswd')
+            confidence = min(100, base_confidence + (nopasswd_count * 10))
 
-        # Check for ALL=(ALL)
-        if 'all' in output and '(all)' in output:
-            findings.append({
-                "severity": "high",
-                "finding": "Sudo ALL privileges",
-                "description": "User can run all commands as any user",
-                "remediation": "Restrict sudo privileges to specific commands"
-            })
+            findings.append(create_finding(
+                "high",
+                "Sudo NOPASSWD configured",
+                f"User can run sudo commands without password authentication. "
+                f"Found {nopasswd_count} NOPASSWD entries. This significantly weakens security. "
+                f"Verification confidence: {confidence}%",
+                "Review /etc/sudoers and remove NOPASSWD entries: sudo visudo",
+                confidence,
+                confidence >= 95
+            ))
+
+        # Check for ALL=(ALL) or ALL=(ALL:ALL)
+        if ('all' in output and '(all)' in output) or 'all=(all:all)' in output:
+            all_count = output.count('(all)')
+            confidence = min(100, base_confidence + (all_count * 10))
+
+            findings.append(create_finding(
+                "critical",
+                "Sudo ALL privileges granted",
+                f"User can run all commands as any user with sudo. This is equivalent to root access. "
+                f"Verification confidence: {confidence}%",
+                "Restrict sudo privileges to specific commands only: sudo visudo",
+                confidence,
+                confidence >= 95
+            ))
 
         # Check for specific dangerous commands
-        dangerous_cmds = ['vim', 'vi', 'nano', 'python', 'perl', 'bash', 'sh']
-        for cmd in dangerous_cmds:
+        dangerous_cmds = {
+            'vim': 'Can escape to shell with :!/bin/bash',
+            'vi': 'Can escape to shell with :!/bin/bash',
+            'nano': 'Can execute commands with Ctrl+R Ctrl+X',
+            'python': 'Can spawn shell with os.system()',
+            'perl': 'Can execute system commands',
+            'bash': 'Direct shell access',
+            'sh': 'Direct shell access',
+            'less': 'Can escape to shell with !bash',
+            'more': 'Can escape to shell with !bash',
+            'find': 'Can execute commands with -exec',
+            'awk': 'Can execute system commands',
+            'man': 'Can escape to shell with !bash'
+        }
+
+        for cmd, exploit in dangerous_cmds.items():
             if cmd in output:
-                findings.append({
-                    "severity": "high",
-                    "finding": f"Sudo privilege for {cmd}",
-                    "description": f"User can run {cmd} with sudo, which can spawn root shell",
-                    "remediation": f"Remove sudo privilege for {cmd}"
-                })
+                # Check if it's in a command context
+                cmd_confidence = base_confidence
+                if f'/{cmd}' in output:
+                    cmd_confidence = min(100, base_confidence + 20)
+
+                findings.append(create_finding(
+                    "high",
+                    f"Sudo privilege for dangerous command: {cmd}",
+                    f"User can run {cmd} with sudo, which allows privilege escalation. "
+                    f"Exploit method: {exploit}. "
+                    f"Verification confidence: {cmd_confidence}%",
+                    f"Remove sudo privilege for {cmd} or use sudoedit for file editing",
+                    cmd_confidence,
+                    cmd_confidence >= 95
+                ))
 
     except subprocess.TimeoutExpired:
         pass
-    except Exception:
+    except Exception as e:
         pass
 
     return findings
 
-def check_writable_services():
-    """Check for writable systemd service files"""
+def check_writable_services_enhanced():
+    """Enhanced check for writable systemd service files with verification"""
     findings = []
 
     try:
-        service_dirs = ['/etc/systemd/system', '/lib/systemd/system']
+        service_dirs = [
+            '/etc/systemd/system',
+            '/lib/systemd/system',
+            '/usr/lib/systemd/system',
+            '/run/systemd/system'
+        ]
 
         for service_dir in service_dirs:
             if not os.path.exists(service_dir):
@@ -190,16 +353,42 @@ def check_writable_services():
                     if file.endswith('.service'):
                         filepath = os.path.join(root, file)
 
-                        # Check if writable by current user
-                        if os.access(filepath, os.W_OK):
-                            findings.append({
-                                "severity": "high",
-                                "finding": f"Writable service file: {filepath}",
-                                "description": "Service file is writable, could be modified for privilege escalation",
-                                "remediation": f"Fix permissions: chmod 644 {filepath}"
-                            })
+                        # Use multi-method verification
+                        is_writable, confidence = verify_writable(filepath)
 
-    except Exception:
+                        if is_writable:
+                            # Check if service is enabled/active for severity
+                            severity = "high"
+                            service_name = file
+
+                            # Try to check if service is active
+                            try:
+                                result = subprocess.run(
+                                    ['systemctl', 'is-active', service_name],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=2
+                                )
+                                is_active = result.returncode == 0
+                                if is_active:
+                                    severity = "critical"
+                                    confidence = min(100, confidence + 10)
+                            except:
+                                pass
+
+                            findings.append(create_finding(
+                                severity,
+                                f"Writable service file: {filepath}",
+                                f"Service file is writable by current user. "
+                                f"Can be modified to execute arbitrary code as root when service starts. "
+                                f"Service is {'active' if severity == 'critical' else 'potentially inactive'}. "
+                                f"Verification confidence: {confidence}%",
+                                f"Fix permissions: sudo chmod 644 {filepath} && sudo chown root:root {filepath}",
+                                confidence,
+                                confidence >= 95
+                            ))
+
+    except Exception as e:
         pass
 
     return findings
@@ -223,51 +412,553 @@ def check_kernel_version():
 
     return findings
 
-def check_writable_path():
-    """Check for writable directories in PATH"""
+def check_writable_path_enhanced():
+    """Enhanced check for writable directories in PATH with verification"""
     findings = []
 
     try:
         path_dirs = os.environ.get('PATH', '').split(':')
 
         for path_dir in path_dirs:
-            if os.path.exists(path_dir) and os.access(path_dir, os.W_OK):
-                findings.append({
-                    "severity": "medium",
-                    "finding": f"Writable PATH directory: {path_dir}",
-                    "description": "Writable PATH directory could be used for privilege escalation",
-                    "remediation": f"Fix permissions: chmod 755 {path_dir}"
-                })
+            if not path_dir or not os.path.exists(path_dir):
+                continue
+
+            # Use multi-method verification
+            is_writable, confidence = verify_writable(path_dir)
+
+            if is_writable:
+                # Check position in PATH for severity
+                path_position = path_dirs.index(path_dir)
+                severity = "high" if path_position < 3 else "medium"
+
+                # Higher confidence if earlier in PATH
+                if path_position == 0:
+                    confidence = min(100, confidence + 15)
+                elif path_position < 3:
+                    confidence = min(100, confidence + 10)
+
+                findings.append(create_finding(
+                    severity,
+                    f"Writable PATH directory: {path_dir}",
+                    f"PATH directory is writable by current user (position {path_position + 1} in PATH). "
+                    f"Attacker can place malicious binaries that will be executed with elevated privileges. "
+                    f"{'Early position in PATH increases exploit likelihood.' if path_position < 3 else ''} "
+                    f"Verification confidence: {confidence}%",
+                    f"Fix permissions: sudo chmod 755 {path_dir} && sudo chown root:root {path_dir}",
+                    confidence,
+                    confidence >= 95
+                ))
+
+    except Exception as e:
+        pass
+
+    return findings
+
+def check_capabilities_enhanced():
+    """Enhanced check for binaries with dangerous Linux capabilities"""
+    findings = []
+
+    try:
+        # Check if getcap is available
+        result = subprocess.run(
+            ['which', 'getcap'],
+            capture_output=True,
+            timeout=2
+        )
+
+        if result.returncode != 0:
+            return findings  # getcap not available
+
+        # Search common directories for capabilities
+        search_paths = ['/usr/bin', '/usr/local/bin', '/bin', '/sbin', '/usr/sbin']
+
+        dangerous_caps = {
+            'cap_setuid': 'Can change UID - allows privilege escalation',
+            'cap_setgid': 'Can change GID - allows group privilege escalation',
+            'cap_dac_override': 'Can bypass file read/write/execute permission checks',
+            'cap_dac_read_search': 'Can bypass file and directory read permission checks',
+            'cap_sys_admin': 'Can perform system administration operations',
+            'cap_sys_ptrace': 'Can trace arbitrary processes',
+            'cap_sys_module': 'Can load/unload kernel modules',
+            'cap_net_admin': 'Can perform network administration',
+            'cap_net_raw': 'Can use RAW and PACKET sockets'
+        }
+
+        for search_path in search_paths:
+            if not os.path.exists(search_path):
+                continue
+
+            try:
+                result = subprocess.run(
+                    ['getcap', '-r', search_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    stderr=subprocess.DEVNULL
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    for line in result.stdout.strip().split('\n'):
+                        if '=' in line:
+                            parts = line.split('=')
+                            if len(parts) >= 2:
+                                binary_path = parts[0].strip()
+                                caps_str = parts[1].strip()
+
+                                # Verify the file has capabilities
+                                checks = []
+                                checks.append('cap_' in caps_str.lower())
+
+                                # Verify file exists and is executable
+                                if os.path.exists(binary_path):
+                                    checks.append(True)
+                                    is_exec, exec_conf = verify_executable(binary_path)
+                                    checks.append(is_exec)
+
+                                confidence = calculate_confidence_score(*checks)
+
+                                # Check if any dangerous capability is present
+                                is_dangerous = False
+                                dangerous_cap_found = []
+                                for cap, description in dangerous_caps.items():
+                                    if cap in caps_str.lower():
+                                        is_dangerous = True
+                                        dangerous_cap_found.append((cap, description))
+
+                                severity = "high" if is_dangerous else "medium"
+
+                                if is_dangerous:
+                                    for cap, desc in dangerous_cap_found:
+                                        findings.append(create_finding(
+                                            severity,
+                                            f"Dangerous capability on {binary_path}: {cap}",
+                                            f"Binary has {cap} capability. {desc}. "
+                                            f"Full capabilities: {caps_str}. "
+                                            f"Verification confidence: {confidence}%",
+                                            f"Remove capability if not needed: sudo setcap -r {binary_path}",
+                                            confidence,
+                                            confidence >= 95
+                                        ))
+                                else:
+                                    findings.append(create_finding(
+                                        severity,
+                                        f"Capability found on {binary_path}",
+                                        f"Binary has capabilities: {caps_str}. Review if necessary. "
+                                        f"Verification confidence: {confidence}%",
+                                        f"Review and remove if not needed: sudo setcap -r {binary_path}",
+                                        confidence,
+                                        confidence >= 95
+                                    ))
+
+            except (subprocess.TimeoutExpired, Exception):
+                continue
+
+    except Exception as e:
+        pass
+
+    return findings
+
+def check_cron_permissions():
+    """Check for writable cron files and directories"""
+    findings = []
+
+    try:
+        cron_locations = [
+            '/etc/crontab',
+            '/etc/cron.d',
+            '/etc/cron.daily',
+            '/etc/cron.hourly',
+            '/etc/cron.monthly',
+            '/etc/cron.weekly',
+            '/var/spool/cron',
+            '/var/spool/cron/crontabs'
+        ]
+
+        for location in cron_locations:
+            if not os.path.exists(location):
+                continue
+
+            # Check if writable
+            is_writable, confidence = verify_writable(location)
+
+            if is_writable:
+                is_file = os.path.isfile(location)
+                item_type = "file" if is_file else "directory"
+
+                findings.append(create_finding(
+                    "critical",
+                    f"Writable cron {item_type}: {location}",
+                    f"Cron {item_type} is writable by current user. "
+                    f"Can be modified to execute arbitrary commands as root. "
+                    f"This is a direct privilege escalation vector. "
+                    f"Verification confidence: {confidence}%",
+                    f"Fix permissions: sudo chmod {'644' if is_file else '755'} {location} && sudo chown root:root {location}",
+                    confidence,
+                    confidence >= 95
+                ))
 
     except Exception:
         pass
 
     return findings
 
-def check_capabilities():
-    """Check for binaries with dangerous capabilities"""
+def check_docker_socket():
+    """Check for accessible Docker socket (common privilege escalation)"""
     findings = []
 
     try:
+        docker_socket = '/var/run/docker.sock'
+
+        if not os.path.exists(docker_socket):
+            return findings
+
+        # Check if current user can access docker socket
+        checks = []
+        checks.append(os.path.exists(docker_socket))
+
+        # Check if writable
+        is_writable, write_confidence = verify_writable(docker_socket)
+        checks.append(is_writable)
+
+        # Check if can connect
+        can_read = os.access(docker_socket, os.R_OK)
+        checks.append(can_read)
+
+        confidence = calculate_confidence_score(*checks)
+
+        if is_writable or can_read:
+            findings.append(create_finding(
+                "critical",
+                "Accessible Docker socket",
+                f"Docker socket is accessible by current user. "
+                f"User can spawn privileged containers and break out to host root. "
+                f"This provides direct root access on the host system. "
+                f"Socket permissions: {'writable' if is_writable else 'readable'}. "
+                f"Verification confidence: {confidence}%",
+                "Remove user from docker group or restrict socket permissions: sudo chmod 660 /var/run/docker.sock",
+                confidence,
+                confidence >= 95
+            ))
+
+    except Exception:
+        pass
+
+    return findings
+
+# Windows-specific privilege escalation checks
+
+def check_always_install_elevated():
+    """Check for AlwaysInstallElevated registry keys (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        import winreg
+
+        checks = []
+        keys_to_check = [
+            (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Policies\Microsoft\Windows\Installer'),
+            (winreg.HKEY_CURRENT_USER, r'SOFTWARE\Policies\Microsoft\Windows\Installer')
+        ]
+
+        hklm_enabled = False
+        hkcu_enabled = False
+
+        # Check HKLM
+        try:
+            key = winreg.OpenKey(keys_to_check[0][0], keys_to_check[0][1])
+            value, _ = winreg.QueryValueEx(key, 'AlwaysInstallElevated')
+            hklm_enabled = (value == 1)
+            checks.append(hklm_enabled)
+            winreg.CloseKey(key)
+        except:
+            checks.append(False)
+
+        # Check HKCU
+        try:
+            key = winreg.OpenKey(keys_to_check[1][0], keys_to_check[1][1])
+            value, _ = winreg.QueryValueEx(key, 'AlwaysInstallElevated')
+            hkcu_enabled = (value == 1)
+            checks.append(hkcu_enabled)
+            winreg.CloseKey(key)
+        except:
+            checks.append(False)
+
+        confidence = calculate_confidence_score(*checks)
+
+        # Both must be set for vulnerability
+        if hklm_enabled and hkcu_enabled:
+            findings.append(create_finding(
+                "critical",
+                "AlwaysInstallElevated enabled",
+                f"Both HKLM and HKCU AlwaysInstallElevated registry keys are set. "
+                f"Any user can install MSI packages with SYSTEM privileges. "
+                f"This allows immediate privilege escalation. "
+                f"Verification confidence: {confidence}%",
+                "Disable AlwaysInstallElevated in Group Policy or remove registry keys",
+                confidence,
+                confidence >= 95
+            ))
+        elif hklm_enabled or hkcu_enabled:
+            findings.append(create_finding(
+                "medium",
+                f"AlwaysInstallElevated partially configured",
+                f"Only {'HKLM' if hklm_enabled else 'HKCU'} AlwaysInstallElevated key is set. "
+                f"Not exploitable unless both are set. "
+                f"Verification confidence: {confidence}%",
+                "Review registry configuration",
+                confidence,
+                confidence >= 95
+            ))
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_unquoted_service_paths():
+    """Check for unquoted service paths (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Query services using sc query
         result = subprocess.run(
-            ['getcap', '-r', '/', '2>/dev/null'],
+            ['sc', 'query', 'state=', 'all'],
             capture_output=True,
             text=True,
-            timeout=30,
-            shell=True
+            timeout=10
         )
 
-        output = result.stdout.strip()
+        if result.returncode != 0:
+            return findings
 
-        if output:
-            for line in output.split('\n'):
-                if 'cap_' in line:
-                    findings.append({
-                        "severity": "medium",
-                        "finding": f"Capability found: {line}",
-                        "description": "Binary has special capabilities that may be exploitable",
-                        "remediation": "Review if capabilities are necessary"
-                    })
+        # Get service names
+        services = []
+        for line in result.stdout.split('\n'):
+            if 'SERVICE_NAME:' in line:
+                service_name = line.split(':', 1)[1].strip()
+                services.append(service_name)
+
+        # Check each service for unquoted path
+        for service in services[:50]:  # Limit to first 50 to avoid timeout
+            try:
+                result = subprocess.run(
+                    ['sc', 'qc', service],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+
+                if result.returncode == 0:
+                    output = result.stdout
+                    for line in output.split('\n'):
+                        if 'BINARY_PATH_NAME' in line:
+                            path = line.split(':', 1)[1].strip()
+
+                            # Check if path contains spaces and is not quoted
+                            if ' ' in path and not path.startswith('"'):
+                                # Remove common prefixes
+                                clean_path = path
+                                for prefix in ['\\??\\', '\\SystemRoot\\']:
+                                    if clean_path.startswith(prefix):
+                                        clean_path = clean_path[len(prefix):]
+
+                                # Extract directory path
+                                parts = clean_path.split()
+                                if len(parts) > 1:
+                                    # Verify the path exists
+                                    checks = []
+                                    checks.append(' ' in path)
+                                    checks.append(not path.startswith('"'))
+
+                                    confidence = calculate_confidence_score(*checks)
+
+                                    findings.append(create_finding(
+                                        "high",
+                                        f"Unquoted service path: {service}",
+                                        f"Service has unquoted path with spaces: {path}. "
+                                        f"If any directory in path is writable, attacker can place malicious executable. "
+                                        f"Verification confidence: {confidence}%",
+                                        f"Quote the service path or check directory permissions",
+                                        confidence,
+                                        confidence >= 95
+                                    ))
+            except:
+                continue
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_writable_service_binaries():
+    """Check for writable service binaries (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Query services
+        result = subprocess.run(
+            ['sc', 'query', 'state=', 'all'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            return findings
+
+        services = []
+        for line in result.stdout.split('\n'):
+            if 'SERVICE_NAME:' in line:
+                service_name = line.split(':', 1)[1].strip()
+                services.append(service_name)
+
+        # Check service binaries
+        for service in services[:30]:  # Limit check
+            try:
+                result = subprocess.run(
+                    ['sc', 'qc', service],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'BINARY_PATH_NAME' in line:
+                            path = line.split(':', 1)[1].strip().strip('"')
+
+                            # Extract executable path
+                            exe_path = path.split()[0] if ' ' in path else path
+
+                            if os.path.exists(exe_path):
+                                # Check if writable
+                                is_writable, confidence = verify_writable(exe_path)
+
+                                if is_writable:
+                                    findings.append(create_finding(
+                                        "critical",
+                                        f"Writable service binary: {service}",
+                                        f"Service binary is writable: {exe_path}. "
+                                        f"Can be replaced with malicious executable that runs as SYSTEM. "
+                                        f"Verification confidence: {confidence}%",
+                                        f"Fix permissions on service binary: {exe_path}",
+                                        confidence,
+                                        confidence >= 95
+                                    ))
+            except:
+                continue
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_scheduled_tasks():
+    """Check for misconfigured scheduled tasks (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        # Query scheduled tasks
+        result = subprocess.run(
+            ['schtasks', '/query', '/fo', 'LIST', '/v'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            return findings
+
+        # Parse output for tasks running as SYSTEM with writable binaries
+        current_task = {}
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+
+            if line.startswith('TaskName:'):
+                if current_task:
+                    # Check previous task
+                    if current_task.get('user') == 'SYSTEM' and current_task.get('task_to_run'):
+                        task_path = current_task['task_to_run']
+                        if os.path.exists(task_path):
+                            is_writable, confidence = verify_writable(task_path)
+                            if is_writable:
+                                findings.append(create_finding(
+                                    "critical",
+                                    f"Writable scheduled task binary: {current_task['name']}",
+                                    f"Scheduled task runs as SYSTEM with writable binary: {task_path}. "
+                                    f"Verification confidence: {confidence}%",
+                                    f"Fix permissions on task binary: {task_path}",
+                                    confidence,
+                                    confidence >= 95
+                                ))
+
+                # Start new task
+                current_task = {'name': line.split(':', 1)[1].strip()}
+
+            elif line.startswith('Run As User:'):
+                current_task['user'] = line.split(':', 1)[1].strip()
+
+            elif line.startswith('Task To Run:'):
+                current_task['task_to_run'] = line.split(':', 1)[1].strip()
+
+    except Exception:
+        pass
+
+    return findings
+
+def check_registry_autoruns():
+    """Check for writable registry autorun locations (Windows)"""
+    findings = []
+
+    if not is_windows():
+        return findings
+
+    try:
+        import winreg
+
+        autorun_keys = [
+            (winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Run'),
+            (winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\RunOnce'),
+            (winreg.HKEY_LOCAL_MACHINE, r'Software\Microsoft\Windows\CurrentVersion\Run'),
+            (winreg.HKEY_LOCAL_MACHINE, r'Software\Microsoft\Windows\CurrentVersion\RunOnce'),
+        ]
+
+        for hive, key_path in autorun_keys:
+            try:
+                key = winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+
+                hive_name = "HKCU" if hive == winreg.HKEY_CURRENT_USER else "HKLM"
+
+                # If we can open with write access, it's writable
+                findings.append(create_finding(
+                    "high" if hive_name == "HKLM" else "medium",
+                    f"Writable autorun registry key: {hive_name}\\{key_path}",
+                    f"Registry autorun key is writable. "
+                    f"Can add malicious programs to auto-start. "
+                    f"{'Affects all users.' if hive_name == 'HKLM' else 'Affects current user.'}",
+                    f"Review and restrict permissions on registry key",
+                    100,
+                    True
+                ))
+
+                winreg.CloseKey(key)
+            except PermissionError:
+                # Expected - key is not writable
+                pass
+            except:
+                pass
 
     except Exception:
         pass
