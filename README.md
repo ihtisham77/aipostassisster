@@ -28,6 +28,7 @@ python3 mcp_server.py
 ```
 
 **See [MCP_INTEGRATION.md](MCP_INTEGRATION.md) for complete documentation.**
+**See [USE_CASES.md](USE_CASES.md) for real-world usage scenarios.**
 
 ### Major Improvements
 
