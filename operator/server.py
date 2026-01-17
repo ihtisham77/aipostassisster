@@ -257,6 +257,132 @@ def health_check():
         "total_agents": len(agents)
     })
 
+@app.route('/api/mcp/capabilities', methods=['GET'])
+def get_mcp_capabilities():
+    """Get framework capabilities for MCP integration"""
+    from module_registry import MODULES, get_all_modules
+
+    capabilities = {
+        "framework": "C2 Security Assessment Framework",
+        "version": "1.0",
+        "features": {
+            "agent_generation": True,
+            "dynamic_modules": True,
+            "multi_platform": True,
+            "report_generation": True,
+            "confidence_scoring": True
+        },
+        "supported_platforms": ["Windows", "Linux"],
+        "available_modules": get_all_modules(),
+        "module_count": len(MODULES),
+        "report_formats": ["console", "json", "html", "markdown"],
+        "api_endpoints": [
+            "/api/register",
+            "/api/checkin",
+            "/api/results",
+            "/api/command",
+            "/api/agents",
+            "/api/health",
+            "/api/mcp/capabilities",
+            "/api/mcp/add_module"
+        ]
+    }
+
+    return jsonify(capabilities)
+
+@app.route('/api/mcp/add_module', methods=['POST'])
+def add_mcp_module():
+    """Add a custom module dynamically via MCP"""
+    # Validate request
+    valid, error = validate_json_request(['module_name', 'module_code', 'description'])
+    if not valid:
+        return jsonify({"status": "error", "message": error}), 400
+
+    data = request.json
+    module_name = data.get('module_name')
+    module_code = data.get('module_code')
+    description = data.get('description')
+    platforms = data.get('platforms', ['Linux', 'Windows'])
+
+    # Validate module name
+    if not validate_string(module_name, min_len=3, max_len=50):
+        return jsonify({"status": "error", "message": "Invalid module name"}), 400
+
+    if not module_name.replace('_', '').isalnum():
+        return jsonify({"status": "error", "message": "Module name must be alphanumeric with underscores"}), 400
+
+    # Validate module code
+    if not validate_string(module_code, min_len=10, max_len=50000):
+        return jsonify({"status": "error", "message": "Invalid module code"}), 400
+
+    if "def run_assessment" not in module_code:
+        return jsonify({"status": "error", "message": "Module code must define 'run_assessment' function"}), 400
+
+    # Validate description
+    if not validate_string(description, min_len=5, max_len=500):
+        return jsonify({"status": "error", "message": "Invalid description"}), 400
+
+    # Validate platforms
+    if not isinstance(platforms, list):
+        return jsonify({"status": "error", "message": "Platforms must be a list"}), 400
+
+    try:
+        from module_registry import MODULES
+
+        # Check if module already exists
+        if module_name in MODULES:
+            return jsonify({"status": "error", "message": f"Module '{module_name}' already exists"}), 409
+
+        # Create module file
+        modules_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agent', 'modules')
+        module_file = os.path.join(modules_dir, f"{module_name}.py")
+
+        if os.path.exists(module_file):
+            return jsonify({"status": "error", "message": "Module file already exists"}), 409
+
+        # Write module file
+        module_content = f'''"""
+{description}
+
+Custom module dynamically added via MCP
+"""
+
+import platform
+
+{module_code}
+
+if __name__ == '__main__':
+    results = run_assessment()
+    import json
+    print(json.dumps(results, indent=2))
+'''
+
+        with open(module_file, 'w') as f:
+            f.write(module_content)
+
+        # Update module registry in memory
+        MODULES[module_name] = {
+            "name": module_name.replace('_', ' ').title(),
+            "description": description,
+            "os": platforms,
+            "priority": 5,
+            "custom": True
+        }
+
+        print(f"[+] MCP: Added custom module '{module_name}'")
+
+        return jsonify({
+            "status": "success",
+            "module_name": module_name,
+            "description": description,
+            "platforms": platforms,
+            "module_file": module_file,
+            "message": f"Module '{module_name}' added successfully"
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 def cleanup_inactive_agents():
     """Background task to mark inactive agents"""
     inactive_timeout = config.get("server", "inactive_timeout") or 300

@@ -2,7 +2,32 @@
 
 A comprehensive Command and Control (C2) framework for security testing and assessment. This framework allows security professionals to test system configurations and identify security weaknesses across Windows and Linux environments.
 
-## 🆕 What's New in v1.1
+## 🆕 What's New in v1.2
+
+### 🤖 MCP Integration - LLM-Powered Security Testing (NEW!)
+
+The framework now supports **Model Context Protocol (MCP)**, enabling AI-powered security assessments through Large Language Models like Claude!
+
+**Key Features:**
+- **🎙️ Natural Language Control**: Interact with the framework using conversational commands
+- **🤖 Automatic Agent Generation**: LLMs can generate and deploy agents automatically
+- **🧩 Dynamic Module Addition**: Add custom assessment modules on-the-fly through LLM interaction
+- **📊 Intelligent Reporting**: AI-assisted report generation and analysis
+- **🚀 Auto-Start Capability**: Operator server starts automatically when needed
+
+**Quick Start with MCP:**
+```bash
+# Run setup script
+./setup_mcp.sh  # Linux/Mac
+setup_mcp.bat   # Windows
+
+# Start MCP server
+python3 mcp_server.py
+
+# Configure your LLM client and start testing with natural language!
+```
+
+**See [MCP_INTEGRATION.md](MCP_INTEGRATION.md) for complete documentation.**
 
 ### Major Improvements
 
