@@ -35,17 +35,23 @@ MODULES = {
         "os": ["Linux", "Windows"],
         "priority": 5
     },
+    "active_directory": {
+        "name": "Active Directory",
+        "description": "Comprehensive AD security assessment: Kerberos attacks, delegation abuse, trust exploitation, certificate services",
+        "os": ["Windows", "Linux"],
+        "priority": 6
+    },
     "exfiltration": {
         "name": "Exfiltration",
         "description": "Check for data exfiltration opportunities including accessible sensitive data, network channels, external storage, and cloud tools",
         "os": ["Linux", "Windows"],
-        "priority": 6
+        "priority": 7
     },
     "cleanup": {
         "name": "Cleanup",
         "description": "Check logging and forensic capabilities for anti-forensic opportunities",
         "os": ["Linux", "Windows"],
-        "priority": 7
+        "priority": 8
     }
 }
 

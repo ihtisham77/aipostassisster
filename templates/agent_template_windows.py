@@ -30,6 +30,7 @@ try:
     from modules import privilege_escalation
     from modules import persistence
     from modules import lateral_movement
+    from modules import active_directory
     from modules import exfiltration
     from modules import cleanup
 except ImportError as e:
@@ -43,8 +44,9 @@ MODULE_REGISTRY = {
     "privilege_escalation": {"module": privilege_escalation, "priority": 3},
     "persistence": {"module": persistence, "priority": 4},
     "lateral_movement": {"module": lateral_movement, "priority": 5},
-    "exfiltration": {"module": exfiltration, "priority": 6},
-    "cleanup": {"module": cleanup, "priority": 7}
+    "active_directory": {"module": active_directory, "priority": 6},
+    "exfiltration": {"module": exfiltration, "priority": 7},
+    "cleanup": {"module": cleanup, "priority": 8}
 }
 
 class C2Agent:
