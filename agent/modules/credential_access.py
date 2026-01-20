@@ -1,5 +1,5 @@
 """
-Credential Harvesting Assessment Module
+Credential Access Assessment Module
 Checks for insecurely stored credentials and sensitive information
 Enhanced with OS-specific checks and confidence scoring
 """
@@ -46,7 +46,7 @@ def check():
     OS-specific with confidence scoring
     """
     results = {
-        "module": "credential_harvesting",
+        "module": "credential_access",
         "platform": platform.system(),
         "findings": []
     }

@@ -297,9 +297,8 @@ def run_assessment(agent_id: str, modules: Optional[str] = "all") -> str:
     Args:
         agent_id: The unique identifier of the target agent
         modules: Comma-separated list of module names, or 'all' for all compatible modules
-                Available modules: reconnaissance, privilege_escalation, persistence,
-                credential_harvesting, lateral_movement, data_access, data_exfiltration,
-                c2_comms, covering_tracks
+                Available modules: reconnaissance, credential_access, privilege_escalation,
+                persistence, lateral_movement, exfiltration, cleanup
 
     Returns:
         JSON string with assessment execution status and queued modules

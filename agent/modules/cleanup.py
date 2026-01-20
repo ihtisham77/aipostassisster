@@ -1,6 +1,7 @@
 """
-Covering Tracks Assessment Module - PRODUCTION ENHANCED
+Cleanup Assessment Module - PRODUCTION ENHANCED
 Checks for logging capabilities and forensic artifacts with OS-specific detection
+Assesses anti-forensic opportunities and track covering capabilities
 """
 
 import os
@@ -31,7 +32,7 @@ def check():
     Check for logging and forensic capabilities with comprehensive multi-method verification
     """
     results = {
-        "module": "covering_tracks",
+        "module": "cleanup",
         "platform": platform.system(),
         "findings": []
     }

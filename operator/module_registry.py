@@ -5,59 +5,47 @@ Defines available security assessment modules with OS compatibility
 
 # Module registry with OS compatibility
 MODULES = {
-    "privilege_escalation": {
-        "name": "Privilege Escalation",
-        "description": "Check for privilege escalation vulnerabilities",
-        "os": ["Linux", "Windows"],
-        "priority": 1  # Higher priority modules run first
-    },
-    "persistence": {
-        "name": "Persistence",
-        "description": "Check for persistence mechanisms",
-        "os": ["Linux", "Windows"],
-        "priority": 2
-    },
-    "credential_harvesting": {
-        "name": "Credential Harvesting",
-        "description": "Check for exposed credentials",
-        "os": ["Linux", "Windows"],
-        "priority": 3
-    },
     "reconnaissance": {
         "name": "Reconnaissance",
         "description": "Gather system and network information",
         "os": ["Linux", "Windows"],
         "priority": 1
     },
+    "credential_access": {
+        "name": "Credential Access",
+        "description": "Check for exposed credentials and insecure credential storage",
+        "os": ["Linux", "Windows"],
+        "priority": 2
+    },
+    "privilege_escalation": {
+        "name": "Privilege Escalation",
+        "description": "Check for privilege escalation vulnerabilities",
+        "os": ["Linux", "Windows"],
+        "priority": 3
+    },
+    "persistence": {
+        "name": "Persistence",
+        "description": "Check for persistence mechanisms",
+        "os": ["Linux", "Windows"],
+        "priority": 4
+    },
     "lateral_movement": {
         "name": "Lateral Movement",
         "description": "Check for lateral movement opportunities",
         "os": ["Linux", "Windows"],
-        "priority": 4
-    },
-    "data_access": {
-        "name": "Data Access",
-        "description": "Check for accessible sensitive data",
-        "os": ["Linux", "Windows"],
-        "priority": 3
-    },
-    "data_exfiltration": {
-        "name": "Data Exfiltration",
-        "description": "Check for data exfiltration channels",
-        "os": ["Linux", "Windows"],
-        "priority": 4
-    },
-    "c2_comms": {
-        "name": "C2 Communications",
-        "description": "Check C2 communication capabilities",
-        "os": ["Linux", "Windows"],
-        "priority": 2
-    },
-    "covering_tracks": {
-        "name": "Covering Tracks",
-        "description": "Check logging and forensic capabilities",
-        "os": ["Linux", "Windows"],
         "priority": 5
+    },
+    "exfiltration": {
+        "name": "Exfiltration",
+        "description": "Check for data exfiltration opportunities including accessible sensitive data, network channels, external storage, and cloud tools",
+        "os": ["Linux", "Windows"],
+        "priority": 6
+    },
+    "cleanup": {
+        "name": "Cleanup",
+        "description": "Check logging and forensic capabilities for anti-forensic opportunities",
+        "os": ["Linux", "Windows"],
+        "priority": 7
     }
 }
 

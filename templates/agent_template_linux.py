@@ -25,30 +25,26 @@ LOCAL_RESULTS_DIR = "assessment_results"  # Directory for local results
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'modules'))
 
 try:
+    from modules import reconnaissance
+    from modules import credential_access
     from modules import privilege_escalation
     from modules import persistence
-    from modules import credential_harvesting
-    from modules import reconnaissance
     from modules import lateral_movement
-    from modules import data_access
-    from modules import data_exfiltration
-    from modules import c2_comms
-    from modules import covering_tracks
+    from modules import exfiltration
+    from modules import cleanup
 except ImportError as e:
     print(f"[!] Failed to import modules: {e}")
     sys.exit(1)
 
 # Module registry - matches operator/module_registry.py
 MODULE_REGISTRY = {
-    "privilege_escalation": {"module": privilege_escalation, "priority": 1},
-    "persistence": {"module": persistence, "priority": 2},
-    "credential_harvesting": {"module": credential_harvesting, "priority": 3},
     "reconnaissance": {"module": reconnaissance, "priority": 1},
-    "lateral_movement": {"module": lateral_movement, "priority": 4},
-    "data_access": {"module": data_access, "priority": 3},
-    "data_exfiltration": {"module": data_exfiltration, "priority": 4},
-    "c2_comms": {"module": c2_comms, "priority": 2},
-    "covering_tracks": {"module": covering_tracks, "priority": 5}
+    "credential_access": {"module": credential_access, "priority": 2},
+    "privilege_escalation": {"module": privilege_escalation, "priority": 3},
+    "persistence": {"module": persistence, "priority": 4},
+    "lateral_movement": {"module": lateral_movement, "priority": 5},
+    "exfiltration": {"module": exfiltration, "priority": 6},
+    "cleanup": {"module": cleanup, "priority": 7}
 }
 
 class C2Agent:
