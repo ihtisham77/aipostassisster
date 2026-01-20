@@ -3,35 +3,14 @@
     "c2-security-framework": {
       "command": "python3",
       "args": [
-        "${workspaceFolder}/mcp_server.py"
+        "mcp_server.py"
       ],
+      "cwd": "/home/user/aipostassisster",
       "env": {
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONPATH": "/home/user/aipostassisster"
       },
-      "description": "C2 Security Assessment Framework - MCP Server for AI-powered security testing",
-      "enabled": true,
-      "autoStart": false
-    }
-  },
-  "settings": {
-    "mcp.autoStartServers": false,
-    "mcp.showNotifications": true,
-    "mcp.logLevel": "info"
-  },
-  "documentation": {
-    "quickStart": "Start the MCP server and use natural language to interact with the C2 framework",
-    "examples": [
-      "Check the framework status",
-      "Generate a Linux agent for security testing",
-      "List all registered agents",
-      "Run a complete security assessment on agent XYZ",
-      "Generate an HTML report for agent XYZ",
-      "Add a custom module to check for Docker exposure"
-    ],
-    "links": {
-      "documentation": "MCP_INTEGRATION.md",
-      "readme": "README.md",
-      "repository": "https://github.com/ihtisham77/aipostassisster"
+      "disabled": false,
+      "alwaysAllow": []
     }
   }
 }
