@@ -8,6 +8,16 @@ import json
 from datetime import datetime
 from collections import defaultdict, Counter
 import os
+import sys
+
+# Import intelligence modules
+try:
+    from risk_scorer import RiskScorer
+    from attack_path_generator import AttackPathGenerator
+except ImportError:
+    # Fallback if modules not available
+    RiskScorer = None
+    AttackPathGenerator = None
 
 
 # Terminal color codes for enhanced output
@@ -33,13 +43,14 @@ class Colors:
 class ReportGenerator:
     """Generate professional security assessment reports with enhanced features"""
 
-    def __init__(self, agent_data, results_data):
+    def __init__(self, agent_data, results_data, enable_intelligence=True):
         """
         Initialize report generator
 
         Args:
             agent_data: Agent information dict
             results_data: List of assessment results from the agent
+            enable_intelligence: Enable AI-powered analysis (risk scoring, attack paths)
         """
         self.agent = agent_data
         self.results = results_data
@@ -48,7 +59,17 @@ class ReportGenerator:
         self.findings_by_confidence = defaultdict(list)
         self.statistics = {}
 
+        # Intelligence features
+        self.enable_intelligence = enable_intelligence and (RiskScorer is not None)
+        self.risk_scorer = None
+        self.attack_path_generator = None
+        self.intelligence_data = {}
+
         self._process_results()
+
+        # Initialize intelligence if enabled
+        if self.enable_intelligence:
+            self._initialize_intelligence()
 
     def _process_results(self):
         """Process and categorize all findings with confidence scoring"""
@@ -208,6 +229,69 @@ class ReportGenerator:
 
         return concerns
 
+    def _initialize_intelligence(self):
+        """Initialize intelligent analysis modules"""
+        try:
+            # Organize results by module for intelligence analysis
+            module_results = {}
+            for result in self.results:
+                module_name = result.get('module', 'unknown')
+                module_results[module_name] = result.get('results', {})
+
+            # Initialize risk scorer
+            self.risk_scorer = RiskScorer()
+
+            # Analyze environment from reconnaissance
+            if 'reconnaissance' in module_results:
+                self.risk_scorer.analyze_environment(module_results['reconnaissance'])
+
+            # Score all findings
+            for severity in self.findings_by_severity:
+                for i, finding in enumerate(self.findings_by_severity[severity]):
+                    module = finding.get('module', 'unknown')
+                    scored_finding = self.risk_scorer.score_finding(finding, module)
+                    self.findings_by_severity[severity][i] = scored_finding
+
+            # Generate attack paths
+            if AttackPathGenerator:
+                self.attack_path_generator = AttackPathGenerator(module_results, self.risk_scorer)
+
+                self.intelligence_data = {
+                    'opsec_assessment': self.risk_scorer.get_opsec_assessment(),
+                    'recommended_actions': self.risk_scorer.get_recommended_actions(module_results),
+                    'attack_paths': self.attack_path_generator.generate_attack_paths(max_paths=5),
+                    'quick_wins': self.attack_path_generator.get_quick_wins(),
+                    'critical_risks': self.attack_path_generator.get_critical_risks()
+                }
+
+        except Exception as e:
+            print(f"Warning: Intelligence analysis failed: {e}")
+            self.enable_intelligence = False
+
+    def get_recommended_actions(self):
+        """Get AI-recommended next actions"""
+        if not self.enable_intelligence:
+            return []
+        return self.intelligence_data.get('recommended_actions', [])
+
+    def get_attack_paths(self):
+        """Get generated attack paths"""
+        if not self.enable_intelligence:
+            return []
+        return self.intelligence_data.get('attack_paths', [])
+
+    def get_quick_wins(self):
+        """Get quick win opportunities"""
+        if not self.enable_intelligence:
+            return []
+        return self.intelligence_data.get('quick_wins', [])
+
+    def get_opsec_assessment(self):
+        """Get OPSEC assessment"""
+        if not self.enable_intelligence:
+            return {}
+        return self.intelligence_data.get('opsec_assessment', {})
+
     def print_console_report(self):
         """Print a beautiful color-coded report to console"""
         exec_summary = self.generate_executive_summary()
@@ -276,6 +360,10 @@ class ReportGenerator:
         for module, count in sorted(self.statistics['module_counts'].items()):
             print(f"  {module:<30} {count:<10} {Colors.OKGREEN}✓ Complete{Colors.ENDC}")
 
+        # Intelligence Sections (if enabled)
+        if self.enable_intelligence:
+            self._print_intelligence_sections()
+
         print("\n" + "="*80)
         print(f"\n{Colors.BOLD}💾 Generate full reports with:{Colors.ENDC}")
         print(f"   report {self.agent.get('agent_id', 'AGENT_ID')} html    # Interactive HTML report")
@@ -313,14 +401,100 @@ class ReportGenerator:
         }
         return badges.get(confidence_level.lower(), f"◆ {confidence_level}")
 
+    def _print_intelligence_sections(self):
+        """Print AI-powered intelligence sections"""
+        print()
+
+        # OPSEC Assessment
+        opsec = self.get_opsec_assessment()
+        if opsec:
+            print(f"\n{Colors.BOLD}{Colors.HEADER}█ OPSEC ASSESSMENT{Colors.ENDC}\n")
+
+            threat_color = {
+                'Low': Colors.OKGREEN,
+                'Moderate': Colors.WARNING,
+                'High': Colors.FAIL,
+                'Critical': Colors.CRITICAL
+            }.get(opsec['threat_level'], Colors.ENDC)
+
+            print(f"  {Colors.BOLD}Threat Level: {threat_color}{opsec['threat_level']}{Colors.ENDC}\n")
+
+            context = opsec['environment_context']
+            print(f"  Environment:")
+            print(f"    EDR Detected:       {'✓ Yes' if context['has_edr'] else '✗ No'}")
+            print(f"    SIEM Detected:      {'✓ Yes' if context['has_siem'] else '✗ No'}")
+            print(f"    Privilege Level:    {context['privilege_level'].title()}")
+            print(f"    Domain Joined:      {'✓ Yes' if context['is_domain_joined'] else '✗ No'}")
+
+            if opsec['recommendations']:
+                print(f"\n  {Colors.BOLD}Key Recommendations:{Colors.ENDC}")
+                for i, rec in enumerate(opsec['recommendations'][:5], 1):
+                    print(f"    {i}. {rec}")
+
+        # Quick Wins
+        quick_wins = self.get_quick_wins()
+        if quick_wins:
+            print(f"\n{Colors.BOLD}{Colors.OKGREEN}█ QUICK WINS (Low-Hanging Fruit){Colors.ENDC}\n")
+            print(f"  {Colors.BOLD}High impact, low detection risk, high feasibility{Colors.ENDC}\n")
+
+            for i, win in enumerate(quick_wins[:5], 1):
+                print(f"  {i}. {Colors.OKGREEN}[{win['phase'].upper()}]{Colors.ENDC} {win['finding']}")
+                print(f"     Impact: {win['impact']}% │ Noise: {win['noise']}% │ Feasibility: {win['feasibility']}%")
+                print(f"     {Colors.BOLD}→{Colors.ENDC} {win['recommendation']}")
+                print()
+
+        # Recommended Actions
+        actions = self.get_recommended_actions()
+        if actions:
+            print(f"\n{Colors.BOLD}{Colors.OKCYAN}█ RECOMMENDED NEXT ACTIONS{Colors.ENDC}\n")
+            print(f"  {Colors.BOLD}Prioritized actions based on risk/reward analysis{Colors.ENDC}\n")
+
+            for i, action in enumerate(actions[:5], 1):
+                phase_color = Colors.OKCYAN
+                print(f"  {i}. {phase_color}[{action['module'].upper()}]{Colors.ENDC}")
+                print(f"     {Colors.BOLD}{action['action']}{Colors.ENDC}")
+                print(f"     Priority: {action['priority']:.0f} │ Impact: {action['impact']} │ Stealth: {100-action['noise']}")
+                print(f"     {Colors.BOLD}→{Colors.ENDC} {action['recommendation']}")
+                print()
+
+        # Attack Paths
+        attack_paths = self.get_attack_paths()
+        if attack_paths:
+            print(f"\n{Colors.BOLD}{Colors.HEADER}█ ATTACK PATHS{Colors.ENDC}\n")
+            print(f"  {Colors.BOLD}Generated attack chains from reconnaissance to objectives{Colors.ENDC}\n")
+
+            for i, path in enumerate(attack_paths[:3], 1):
+                risk_color = {
+                    'Low Risk': Colors.OKGREEN,
+                    'Moderate Risk': Colors.WARNING,
+                    'High Risk': Colors.FAIL,
+                    'Very High Risk': Colors.CRITICAL
+                }.get(path['risk_level'], Colors.ENDC)
+
+                print(f"  {Colors.BOLD}Path {i}: {' → '.join(path['phases'])}{Colors.ENDC}")
+                print(f"  Risk: {risk_color}{path['risk_level']}{Colors.ENDC} │ "
+                      f"Score: {path['overall_score']:.1f}/100 │ "
+                      f"Steps: {path['length']}")
+                print(f"  {Colors.BOLD}→{Colors.ENDC} {path['recommendation']}\n")
+
+                # Show first 3 steps
+                for j, step in enumerate(path['steps'][:3], 1):
+                    phase_color = Colors.OKCYAN
+                    print(f"    {j}. {phase_color}[{step['phase'].upper()}]{Colors.ENDC} {step['action'][:60]}")
+
+                if len(path['steps']) > 3:
+                    print(f"    ... and {len(path['steps']) - 3} more steps")
+                print()
+
     def generate_json_report(self):
         """Generate complete report in JSON format"""
         report = {
             'metadata': {
                 'report_generated': datetime.now().isoformat(),
-                'report_version': '2.0',
-                'framework': 'C2 Security Assessment Framework - Enhanced',
-                'confidence_scoring_enabled': True
+                'report_version': '3.0',
+                'framework': 'C2 Security Assessment Framework - Intelligent',
+                'confidence_scoring_enabled': True,
+                'intelligence_enabled': self.enable_intelligence
             },
             'agent_info': self.agent,
             'executive_summary': self.generate_executive_summary(),
@@ -330,6 +504,15 @@ class ReportGenerator:
             'findings_by_confidence': dict(self.findings_by_confidence),
             'raw_results': self.results
         }
+
+        # Add intelligence data if enabled
+        if self.enable_intelligence:
+            report['intelligence'] = {
+                'opsec_assessment': self.get_opsec_assessment(),
+                'recommended_actions': self.get_recommended_actions(),
+                'attack_paths': self.get_attack_paths(),
+                'quick_wins': self.get_quick_wins()
+            }
 
         return report
 
