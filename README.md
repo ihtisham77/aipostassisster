@@ -2,6 +2,67 @@
 
 A comprehensive Command and Control (C2) framework for security testing and assessment. This framework allows security professionals to test system configurations and identify security weaknesses across Windows and Linux environments.
 
+## 🆕 What's New in v1.2
+
+### 🤖 MCP Integration - LLM-Powered Security Testing (NEW!)
+
+The framework now supports **Model Context Protocol (MCP)**, enabling AI-powered security assessments through Large Language Models like Claude!
+
+**Key Features:**
+- **🎙️ Natural Language Control**: Interact with the framework using conversational commands
+- **🤖 Automatic Agent Generation**: LLMs can generate and deploy agents automatically
+- **🧩 Dynamic Module Addition**: Add custom assessment modules on-the-fly through LLM interaction
+- **📊 Intelligent Reporting**: AI-assisted report generation and analysis
+- **🚀 Auto-Start Capability**: Operator server starts automatically when needed
+
+**Quick Start with MCP:**
+```bash
+# Run setup script
+./setup_mcp.sh  # Linux/Mac
+setup_mcp.bat   # Windows
+
+# Start MCP server
+python3 mcp_server.py
+
+# Configure your LLM client and start testing with natural language!
+```
+
+**See [MCP_INTEGRATION.md](MCP_INTEGRATION.md) for complete documentation.**
+**See [USE_CASES.md](USE_CASES.md) for real-world usage scenarios.**
+
+### Major Improvements
+
+1. **🎯 Simplified Workflow**
+   - Auto-detection of server IP and port
+   - No need to specify URLs manually
+   - Just run `python3 agent_generator.py linux` or `python3 cli.py`
+
+2. **📊 Professional Report Generation**
+   - Comprehensive HTML, Markdown, and JSON reports
+   - Executive summary with risk scoring (0-100)
+   - Visual charts and severity indicators
+   - Actionable remediation recommendations
+   - Professional design suitable for stakeholder review
+
+3. **⚙️ Configuration System**
+   - Multi-layered configuration (CLI > ENV > config.json > defaults)
+   - Environment variable support
+   - Centralized config.json file
+   - Easy customization without code changes
+
+4. **🔒 Input Validation**
+   - All API endpoints validate inputs
+   - UUID format checking
+   - String length limits
+   - Required field validation
+   - Proper error messages and HTTP status codes
+
+5. **🔧 Enhanced Usability**
+   - New default port: 8542 (less conflicts)
+   - Better error messages
+   - Improved CLI help system
+   - Auto-detection of network configuration
+
 ## ⚠️ Legal Disclaimer
 
 **FOR AUTHORIZED USE ONLY**
@@ -144,23 +205,40 @@ pip install -r requirements.txt
 python3 operator/server.py
 ```
 
-The server will start on `http://0.0.0.0:5000`
+The server will start on `http://0.0.0.0:8542` (new default port)
 
-### 3. Generate Agents
+**Output:**
+```
+╔═══════════════════════════════════════╗
+║     C2 Operator Server v1.0           ║
+║   Security Assessment Framework       ║
+╚═══════════════════════════════════════╝
 
-#### Linux Agent
-```bash
-cd operator
-python3 agent_generator.py linux http://<your-operator-ip>:5000
+[*] Starting operator server on http://0.0.0.0:8542
+[*] Local IP: 192.168.1.100
+[*] External URL: http://192.168.1.100:8542
+[*] Use operator CLI to interact with agents
+[*] Inactive agent timeout: 300s
 ```
 
-#### Windows Agent
+### 3. Generate Agents (Simplified!)
+
+**No need to specify URL anymore!** Auto-detection handles it:
+
 ```bash
-cd operator
-python3 agent_generator.py windows http://<your-operator-ip>:5000
+# Linux Agent
+python3 operator/agent_generator.py linux
+
+# Windows Agent
+python3 operator/agent_generator.py windows
 ```
 
-Generated agents will be in the `generated_agents/` directory.
+The generator automatically detects the server IP and port. Generated agents will be in the `generated_agents/` directory.
+
+**Optional:** Override URL if needed:
+```bash
+python3 operator/agent_generator.py linux http://<custom-ip>:8542
+```
 
 ### 4. Deploy Agents
 
@@ -174,23 +252,46 @@ python3 agent_linux_<id>.py
 python agent_windows_<id>.py
 ```
 
-### 5. Use the Operator CLI
+### 5. Use the Operator CLI (Simplified!)
 
+**Simply run:**
 ```bash
-python3 operator/cli.py http://localhost:5000
+python3 operator/cli.py
+```
+
+The CLI automatically connects to the server. No URL needed!
+
+**Optional:** Connect to custom server:
+```bash
+python3 operator/cli.py http://<server-ip>:8542
 ```
 
 ## 💻 CLI Commands
 
 ```
-operator> agents                              # List all agents
-operator> results <agent_id>                  # View agent results
-operator> module <agent_id> <module_name>     # Run assessment module
-operator> shell <agent_id> <command>          # Execute shell command
-operator> generate <platform> <url>           # Generate new agent
-operator> modules                             # List available modules
-operator> help                                # Show help
-operator> exit                                # Exit CLI
+operator> agents                               # List all agents
+operator> results <agent_id>                   # View agent results
+operator> module <agent_id> <module_name>      # Run assessment module
+operator> shell <agent_id> <command>           # Execute shell command
+operator> report <agent_id> [format] [dir]     # Generate professional report (NEW!)
+operator> generate <platform> [url]            # Generate new agent (URL optional)
+operator> modules                              # List available modules
+operator> help                                 # Show help
+operator> exit                                 # Exit CLI
+```
+
+### Report Formats
+
+Generate comprehensive security reports in multiple formats:
+
+- `all` - JSON, Markdown, and HTML (default)
+- `json` - Structured data format
+- `html` - Professional web report
+- `markdown` - Documentation-friendly format
+
+**Example:**
+```
+operator> report abc123def456 all reports/
 ```
 
 ## 📊 Example Usage
@@ -245,7 +346,115 @@ Results:
 }
 ```
 
+## 📊 Professional Report Generation (NEW!)
+
+Generate comprehensive, professional security assessment reports with a single command!
+
+### Features
+
+- **Executive Summary** - Risk score, key statistics, critical findings
+- **Risk Assessment** - Overall risk level (0-100 score) with visual indicators
+- **Detailed Findings** - Organized by severity with remediation steps
+- **Multiple Formats** - JSON, Markdown, and HTML reports
+- **Professional Design** - Clean, readable HTML reports with charts
+- **Actionable Recommendations** - Prioritized remediation guidance
+
+### Generate Reports
+
+```bash
+# From CLI
+operator> report <agent_id>
+
+# From command line
+python3 operator/report_generator.py http://localhost:8542 <agent_id>
+```
+
+### Report Contents
+
+1. **Executive Summary**
+   - Target system information
+   - Overall risk score and level
+   - Total findings by severity
+   - Key security concerns (top 5)
+
+2. **Statistics Dashboard**
+   - Findings distribution chart
+   - Severity breakdown
+   - Module coverage
+   - Assessment timeline
+
+3. **Detailed Findings**
+   - Critical issues (prioritized)
+   - High severity issues
+   - Medium and low issues
+   - Informational findings
+   - Each with description and remediation
+
+4. **Recommendations**
+   - Immediate actions (critical)
+   - High priority actions
+   - Medium priority actions
+   - Long-term improvements
+
+### Sample Report Output
+
+```
+reports/
+├── report_webserver_abc123de_20260116_143022.html  # Professional web report
+├── report_webserver_abc123de_20260116_143022.md    # Markdown documentation
+└── report_webserver_abc123de_20260116_143022.json  # Structured data
+```
+
+**Open HTML report in browser for best experience!**
+
+---
+
 ## 🔧 Configuration
+
+### Automatic Configuration (NEW!)
+
+The framework now features automatic configuration with multiple sources:
+
+**Priority Order:**
+1. Command-line arguments (highest)
+2. Environment variables
+3. config.json file
+4. Default values (lowest)
+
+### config.json
+
+The framework automatically reads from `config.json`:
+
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8542,
+    "inactive_timeout": 300
+  },
+  "agent": {
+    "checkin_interval": 30,
+    "command_timeout": 30
+  },
+  "operator": {
+    "default_server_url": "http://localhost:8542"
+  }
+}
+```
+
+### Environment Variables
+
+Override configuration using environment variables:
+
+```bash
+export OPERATOR_URL="http://192.168.1.100:8542"
+export OPERATOR_PORT=9000
+export CHECKIN_INTERVAL=60
+
+# Now all tools auto-detect these settings
+python3 operator/agent_generator.py linux
+python3 operator/cli.py
+```
 
 ### Agent Configuration
 
@@ -263,11 +472,31 @@ Edit `operator/server.py` to configure:
 
 ## 🛡️ Security Considerations
 
-1. **Network Security**: Use HTTPS in production environments
-2. **Authentication**: Implement authentication for operator server
-3. **Encryption**: Encrypt agent communications
+### Implemented Security Features (NEW!)
+
+1. **Input Validation** ✅
+   - UUID format validation for agent IDs
+   - String length limits on all inputs
+   - Required field validation
+   - Data type checking
+   - Command type validation
+   - Malformed request rejection
+
+2. **Error Handling** ✅
+   - Descriptive error messages
+   - HTTP status codes (400, 404, 500)
+   - Graceful degradation
+   - No information leakage
+
+### Recommended Additional Security
+
+1. **Network Security**: Use HTTPS in production environments (implement TLS)
+2. **Authentication**: Implement API key or OAuth for operator server
+3. **Encryption**: Encrypt agent communications (implement E2E encryption)
 4. **Logging**: Enable comprehensive logging for audit trails
 5. **Cleanup**: Remove agents after assessment completion
+6. **Access Control**: Restrict operator CLI access
+7. **Report Security**: Secure report storage (contains sensitive data)
 
 ## 📝 Assessment Modules
 

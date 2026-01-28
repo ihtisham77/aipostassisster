@@ -1,0 +1,14 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8542,
+    "inactive_timeout": 300
+  },
+  "agent": {
+    "checkin_interval": 30,
+    "command_timeout": 30
+  },
+  "operator": {
+    "default_server_url": "http://localhost:8542"
+  }
+}
